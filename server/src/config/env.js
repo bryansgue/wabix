@@ -1,17 +1,21 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env from project root or server root
-const envPath =
-    process.env.IS_DOCKER === 'true'
-        ? path.join(__dirname, '../../.env')
-        : path.join(__dirname, '../../.env'); // Always look in server/ .env for now
+const defaultEnvPath = path.resolve(__dirname, '../../../.env');
+const envPath = process.env.ENV_FILE_PATH
+    ? path.resolve(process.env.ENV_FILE_PATH)
+    : defaultEnvPath;
 
-dotenv.config({ path: envPath });
+if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+} else {
+    dotenv.config();
+}
 
 export const config = {
     port: process.env.PORT || 3001,

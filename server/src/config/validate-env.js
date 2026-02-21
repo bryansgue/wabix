@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -8,18 +9,24 @@ const __dirname = path.dirname(__filename);
 // ============================================
 // 1. LOAD .ENV
 // ============================================
-const envPath = process.env.IS_DOCKER === 'true'
-    ? path.join(__dirname, '../../.env')
-    : path.join(__dirname, '../../.env');
+const defaultEnvPath = path.resolve(__dirname, '../../../.env');
+const envPath = process.env.ENV_FILE_PATH
+    ? path.resolve(process.env.ENV_FILE_PATH)
+    : defaultEnvPath;
 
-const result = dotenv.config({ path: envPath });
+if (fs.existsSync(envPath)) {
+    const result = dotenv.config({ path: envPath });
 
-if (result.error) {
-    console.error('❌ FATAL: Failed to load .env file');
-    console.error('   Path:', envPath);
-    console.error('   Error:', result.error.message);
-    console.error('\n   Please ensure .env file exists in the server directory');
-    process.exit(1);
+    if (result.error) {
+        console.error('❌ FATAL: Failed to load .env file');
+        console.error('   Path:', envPath);
+        console.error('   Error:', result.error.message);
+        console.error('\n   Please ensure .env file exists in the project root');
+        process.exit(1);
+    }
+} else {
+    console.warn('⚠️  WARNING: .env file not found at', envPath);
+    console.warn('   Falling back to existing environment variables');
 }
 
 // ============================================
