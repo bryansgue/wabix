@@ -1,0 +1,4 @@
+{
+    "ignore": ["auth_info/*", "data/*", "public/*"],
+    "ext": "js,json"
+}

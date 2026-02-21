@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background: Rounded rectangle with the app's brand green -->
+  <rect width="512" height="512" rx="120" fill="#00a884"/>
+  
+  <!-- Antenna -->
+  <path d="M256 160V90H190" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Body -->
+  <rect x="90" y="160" width="332" height="262" rx="48" stroke="white" stroke-width="28" stroke-linejoin="round"/>
+  
+  <!-- Arm connections -->
+  <path d="M45 291H90" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M422 291H467" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Eyes -->
+  <path d="M312 265V315" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M200 265V315" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

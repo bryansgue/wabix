@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  whatsapp-bot:
+    build: .
+    container_name: whatsapp-ai-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+    volumes:
+      - ./auth_info:/app/auth_info
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/autobot?schema=public
+    # Create the auth_info folder locally if it doesn't exist to avoid permission issues
+    # user: "1000:1000" # Uncomment if using Linux to match permissions
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: autobot-postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=autobot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+
+

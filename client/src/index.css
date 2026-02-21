@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased bg-wa-dark text-wa-primary;
+    background-image: radial-gradient(circle at 50% 0%, #334155 0%, #0f172a 50%, #020617 100%);
+    min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-wa-panel/40 backdrop-blur-xl border border-white/10 shadow-xl;
+  }
+
+  .glass-input {
+    @apply bg-black/20 border border-white/10 text-wa-primary placeholder-wa-secondary/50 transition-all duration-300 outline-none;
+  }
+
+  .glass-input:focus {
+    @apply border-wa-accent-wa-teal/50 ring-1 ring-wa-accent-wa-teal/50;
+  }
+
+  .neon-glow {
+    box-shadow: 0 0 15px theme('colors.wa.accent-wa-teal');
+    opacity: 0.8;
+    /* Adjusting opacity separately or keeping hardcoded rgb for shadow alpha is tricky with just theme(). Let's keep it simple or use Tailwind's shadow utility if strict match needed. */
+    /* Actually, to preserve exact look while "cleaning", hardcoded RGBA is sometimes better than complex calc(). 
+       But I will fix the main requested items from my explanation: Line 7 and the Focus block. */
+    box-shadow: 0 0 15px rgba(34, 211, 238, 0.15);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+  }
+}
+
+/* Animations */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-5px);
+  }
+
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes pulse-slow {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.8;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 4s ease-in-out infinite;
+}
+
+.animate-slideDown {
+  animation: slideDown 0.3s ease-out forwards;
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 211, 238, 0.4);
+}
+
+@keyframes shine {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shine {
+  animation: shine 2s infinite;
+}

@@ -1,0 +1,21 @@
+# Dependency folders
+node_modules
+client/node_modules
+server/node_modules
+
+# Build artifacts
+client/dist
+server/dist
+server/uploads
+
+# Runtime state
+auth_info
+sessions
+data
+backups
+
+# Misc
+.git
+.env
+.env.local
+.DS_Store

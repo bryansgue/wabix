@@ -1,0 +1,131 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String
+  role         String    @default("user") // 'admin' or 'user'
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  expiresAt    DateTime? 
+  planType     String?   @default("none") // 'mensual', 'trimestral', 'anual' or 'none'
+
+  // Relations
+  bot          Bot?
+}
+
+model Bot {
+  id                    String    @id @default(uuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Configuration (JSONB for flexibility as planned)
+  config                String    @default("{}") // SQLite doesn't support Json, store as String
+
+  // Session State
+  silencedChats         String    @default("[]") // SQLite doesn't support arrays, store as JSON String
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  messages              Message[]
+  reminders             Reminder[]
+  clients               Client[]
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  chatId    String
+  role      String   // 'user' or 'assistant'
+  content   String   // SQLite uses TEXT by default for String
+  timestamp DateTime @default(now())
+  isBroadcast Boolean @default(false)
+  isReminder Boolean @default(false)
+  isManual  Boolean @default(false)  // Track manual operator messages
+  status    String   @default("SENT") // SENT, DELIVERED, READ
+  whatsappId String? // Baileys Message ID
+  
+  // Media Support
+  hasMedia  Boolean @default(false)
+  mediaUrl  String? // Path relative to /uploads
+  mediaType String? // 'image', 'audio', 'video', 'document'
+
+  @@index([botId, chatId])
+  @@index([botId, whatsappId])
+}
+
+model Reminder {
+  id        String   @id @default(uuid())
+  botId          String
+  bot            Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  chatId         String
+  dueDate        DateTime
+  recurrenceDays Int?     // If set, reminder repeats every X days (30, 60, 90, 365, etc.)
+  createdAt      DateTime @default(now())
+
+  @@index([botId, dueDate])
+}
+
+model Client {
+  id            String   @id @default(uuid())
+  chatId        String   // Phone number (e.g. 12345678@s.whatsapp.net)
+  name          String?  // WhatsApp Name
+  profilePicUrl String?  // Profile picture URL
+  
+  // CRM Fields
+  status    String   @default("LEAD") // LEAD, CUSTOMER, ARCHIVED, BLOCKED
+  notes     String?
+  tags      String   @default("[]") // JSON string for tags
+  lastBroadcastAt DateTime? // Track last broadcast time
+  isBotPaused    Boolean   @default(false) // Manual indefinite pause
+  botPausedUntil DateTime? // Automatic temporary pause
+  
+  // Relations
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([botId, chatId])
+  @@index([botId, status])
+}
+
+model SystemSettings {
+  id                String   @id @default("singleton")
+  allowRegistration Boolean  @default(true)
+  
+  // Business Info
+  businessContact   String?  @default("")
+  priceMonthly     String?  @default("0")
+  priceQuarterly   String?  @default("0")
+  priceAnnual      String?  @default("0")
+  
+  // Links
+  openaiLink       String?  @default("https://openai.com")
+  facebookLink     String?  @default("https://facebook.com/autobot")
+  credits          String?  @default("AutoBOT AI © 2026")
+  
+  // Security / Rate Limiting
+  rateLimitEnabled    Boolean @default(true)
+  maxLoginAttempts    Int     @default(5)
+  loginWindowMinutes  Int     @default(60)
+
+  
+  updatedAt         DateTime @updatedAt
+}

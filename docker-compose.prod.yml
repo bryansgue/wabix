@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  # Database Service
+  postgres:
+    image: postgres:15-alpine
+    container_name: autobot_db_prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeMeInProd}
+      POSTGRES_DB: ${POSTGRES_DB:-autobot}
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Service
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: autobot_backend_prod
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-ChangeMeInProd}@postgres:5432/${POSTGRES_DB:-autobot}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      FRONTEND_URL: https://${DOMAIN_NAME:-bot.soft-dg.com}
+    volumes:
+      - ./brain:/app/brain
+      - ./sessions:/app/sessions
+      - ./auth_info:/app/auth_info
+      - ./.env:/app/.env
+    networks:
+      - app-network
+
+  # Frontend Service (Serving Static Build)
+  # Uses a multi-stage build to produce static files, served by a lightweight server or just mounting volumes to Caddy
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: autobot_frontend_builder
+    # This container just builds and exits, or serves files. 
+    # Better approach: Use Caddy to serve the built files directly from a volume shared with a builder, or build inside the Caddy image.
+    # Simpler approach for this setup: Build image runs Nginx/Caddy internally on port 80.
+    restart: always
+    networks:
+      - app-network
+
+  # Proxy / Gateway
+  caddy:
+    image: caddy:2-alpine
+    container_name: autobot_gateway
+    restart: always
+    ports:
+      - "8085:80" # Exposed to localhost for Cloudflared Tunnel
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - app-network
+    depends_on:
+      - backend
+      - frontend
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data_prod:
+  caddy_data:
+  caddy_config:
