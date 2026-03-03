@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthProvider';
 import api, { deleteReminders } from '../services/api';
 import { LayoutDashboard, Users, Search, Trash2, Save, Filter, MessageSquare, DollarSign, Megaphone, X } from 'lucide-react';
@@ -56,7 +56,7 @@ export const ClientsPage = () => {
         }
     };
 
-    const fetchClients = async () => {
+    const fetchClients = useCallback(async () => {
         setLoading(true);
         try {
             const { data } = await api.get('/clients', {
@@ -71,34 +71,46 @@ export const ClientsPage = () => {
             setTotalPages(Math.ceil(data.total / 10));
             setSelectedRows([]); // Clear selection on fetch
 
-            // AUTO-SELECT LOGIC:
-            // If we have clients, no selected client, and on page 1 (initial load mostly)
-            // Or if we just want to ensure *someone* is selected always if list not empty.
-            if (data.data.length > 0 && !selectedClient) {
-                // Select the first one (most recent due to sort order)
-                setSelectedClient(data.data[0]);
-            }
+            setSelectedClient(prev => {
+                if (prev) return prev;
+                return data.data[0] || null;
+            });
 
         } catch (error) {
             console.error('Failed to load clients', error);
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, filter]);
 
-    const fetchStats = async () => {
+    const fetchStats = useCallback(async () => {
         try {
             const { data } = await api.get('/clients/stats');
             setStats(data);
         } catch (error) {
             console.error('Failed to load stats', error);
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetchClients();
         fetchStats();
-    }, [page, filter]);
+    }, [fetchClients, fetchStats]);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleClientUpdated = () => {
+            fetchClients();
+            fetchStats();
+        };
+
+        socket.on('client_updated', handleClientUpdated);
+
+        return () => {
+            socket.off('client_updated', handleClientUpdated);
+        };
+    }, [socket, fetchClients, fetchStats]);
 
     const handleStatusChange = async (id, newStatus) => {
         try {

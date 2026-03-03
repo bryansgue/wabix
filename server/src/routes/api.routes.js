@@ -21,6 +21,7 @@ router.get('/config', controller.getConfig);
 router.post('/config', controller.updateConfig);
 router.post('/pairing', controller.requestPairingCode);
 router.post('/upload-context', upload.single('file'), controller.uploadContext);
+router.get('/plans/catalog', controller.getPlanCatalog);
 
 // CRM Routes
 router.get('/clients/stats', controller.getClientStats);

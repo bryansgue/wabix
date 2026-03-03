@@ -354,7 +354,7 @@ export class WhatsAppService {
                 if ((botNumber && chatId === botNumber) || m.key.fromMe || chatId.includes('@lid') || chatId.includes('status') || chatId.includes('broadcast')) {
                     // Skip
                 } else {
-                    const contactName = m.pushName; // Don't fallback to ID to prevent overwriting saved names
+                    const contactName = this.resolveContactName(chatId, m.pushName);
 
                     // Fetch profile picture
                     let profilePicUrl = null;
@@ -364,7 +364,19 @@ export class WhatsAppService {
                         // No profile picture available (privacy settings or new contact)
                     }
 
-                    await clientService.upsertClient(bot.id, chatId, contactName, profilePicUrl);
+                    const { client: crmClient, isNew } = await clientService.upsertClient(bot.id, chatId, contactName, profilePicUrl);
+
+                    if (isNew) {
+                        this.emitClientUpdate({
+                            type: 'NEW_CLIENT',
+                            clientId: crmClient.id,
+                            chatId: crmClient.chatId,
+                            name: crmClient.name,
+                            status: crmClient.status,
+                            profilePicUrl: crmClient.profilePicUrl,
+                            createdAt: crmClient.createdAt,
+                        });
+                    }
                 }
             } catch (crmError) {
                 console.error(`[${this.userId}] CRM Error:`, crmError);
@@ -600,12 +612,26 @@ export class WhatsAppService {
                     await Promise.race([conversionPromise, timeoutPromise]);
 
                     // Transcribe the converted MP3
-                    text = await openaiService.transcribeAudio(outputPath, config);
+                    text = await openaiService.transcribeAudio({
+                        userId: this.userId,
+                        audioPath: outputPath,
+                        config,
+                    });
 
                     // Cleanup
                     await fsPromises.unlink(inputPath).catch(() => { });
                     await fsPromises.unlink(outputPath).catch(() => { });
                 } catch (error) {
+                    if (error?.isPlanLimit) {
+                        console.warn(`[${this.userId}] Audio blocked by plan policy (${error.code}).`);
+                        try {
+                            const sm = await this.sock.sendMessage(chatId, { text: error.message });
+                            if (sm?.key?.id) this.botMessageIds.add(sm.key.id);
+                        } catch (sendErr) {
+                            console.error(`[${this.userId}] Failed to notify audio limit:`, sendErr.message);
+                        }
+                        return;
+                    }
                     console.error(`[${this.userId}] Error processing audio:`, error);
                 }
             }
@@ -660,7 +686,14 @@ export class WhatsAppService {
                     let sentMsgId = null;
 
                     try {
-                        response = await openaiService.generateResponse(text, history, imageBase64, config, mimeType);
+                        response = await openaiService.generateResponse({
+                            userId: this.userId,
+                            userMessage: text,
+                            history,
+                            imageBase64,
+                            config,
+                            mimeType,
+                        });
                         if (!response) throw new Error('Empty response from OpenAI');
 
                         // ✅ VERIFY CONNECTION BEFORE SENDING
@@ -678,20 +711,34 @@ export class WhatsAppService {
                         if (sentMsgId) this.botMessageIds.add(sentMsgId);
 
                     } catch (aiError) {
-                        console.error(`[${this.userId}] CRITICAL AI FAILURE:`, aiError);
-
-                        // Only attempt fallback if we're connected
-                        if (config.fallbackMessage && this.status === 'connected') {
-                            try {
-                                response = config.fallbackMessage;
-                                const sentMsg = await this.sock.sendMessage(chatId, { text: response });
-                                sentMsgId = sentMsg?.key?.id;
-                                if (sentMsgId) this.botMessageIds.add(sentMsgId);
-                            } catch (fallbackError) {
-                                console.error(`[${this.userId}] Failed to send fallback message:`, fallbackError.message);
+                        if (aiError?.isPlanLimit) {
+                            console.warn(`[${this.userId}] Plan limit triggered (${aiError.code}).`);
+                            response = aiError.message;
+                            if (this.status === 'connected') {
+                                try {
+                                    const sentMsg = await this.sock.sendMessage(chatId, { text: response });
+                                    sentMsgId = sentMsg?.key?.id;
+                                    if (sentMsgId) this.botMessageIds.add(sentMsgId);
+                                } catch (notifyError) {
+                                    console.error(`[${this.userId}] Failed to send plan warning:`, notifyError.message);
+                                }
                             }
-                        } else if (this.status !== 'connected') {
-                            console.warn(`[${this.userId}] Message lost due to disconnection. Response: "${response?.substring(0, 50)}..."`);
+                        } else {
+                            console.error(`[${this.userId}] CRITICAL AI FAILURE:`, aiError);
+
+                            // Only attempt fallback if we're connected
+                            if (config.fallbackMessage && this.status === 'connected') {
+                                try {
+                                    response = config.fallbackMessage;
+                                    const sentMsg = await this.sock.sendMessage(chatId, { text: response });
+                                    sentMsgId = sentMsg?.key?.id;
+                                    if (sentMsgId) this.botMessageIds.add(sentMsgId);
+                                } catch (fallbackError) {
+                                    console.error(`[${this.userId}] Failed to send fallback message:`, fallbackError.message);
+                                }
+                            } else if (this.status !== 'connected') {
+                                console.warn(`[${this.userId}] Message lost due to disconnection. Response: "${response?.substring(0, 50)}..."`);
+                            }
                         }
                     } finally {
                         try {
@@ -777,6 +824,34 @@ export class WhatsAppService {
                 if (this.userInfo) this.io.to(this.userId).emit('connection_info', this.userInfo);
             }
         }
+    }
+
+    resolveContactName(chatId, pushName) {
+        const trimmedPush = pushName?.trim();
+        if (trimmedPush) {
+            return trimmedPush;
+        }
+
+        if (typeof this.sock?.getName === 'function') {
+            const derived = this.sock.getName(chatId);
+            if (derived) {
+                return derived;
+            }
+        }
+
+        const contact = this.sock?.store?.contacts?.[chatId]
+            || this.sock?.store?.contacts?.[jidNormalizedUser(chatId)]
+            || this.sock?.contacts?.[chatId];
+
+        if (contact) {
+            return contact.notify
+                || contact.name
+                || contact.verifiedName
+                || contact.verifiedBizName
+                || null;
+        }
+
+        return null;
     }
 
     emitMessageStatus(messageId, status) {

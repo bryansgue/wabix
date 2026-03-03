@@ -1,6 +1,7 @@
 import { sessionManager } from '../services/session.manager.js';
 import { authService } from '../services/auth.service.js';
 import { statsService } from '../services/stats.service.js';
+import { listPlanDefinitions } from '../services/plan.service.js';
 
 // Helper to get or start a session for the authenticated user
 const getBot = async (req) => {
@@ -244,6 +245,22 @@ export const updateAuthSettings = async (req, res) => {
         res.json(updated);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+};
+
+export const getPlanCatalog = async (req, res) => {
+    try {
+        const users = await authService.getAllUsers();
+        const requester = users.find((u) => u.id === req.user.id);
+
+        if (!requester || requester.role?.toUpperCase() !== 'ADMIN') {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        const plans = listPlanDefinitions({ includeAdmin: true, includeHidden: true });
+        res.json({ plans });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch plan catalog' });
     }
 };
 

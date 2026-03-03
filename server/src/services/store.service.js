@@ -4,6 +4,7 @@ import { prisma } from './db.service.js';
 const DEFAULT_CONFIG = {
     openaiApiKey: '',
     systemPrompt: 'Eres Neo, un asistente virtual profesional y útil.',
+    model: 'gpt-4o-mini',
     temperature: 0.7,
     enableVision: false,
     enableAudio: true,

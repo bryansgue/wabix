@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "monthlyLimit" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "remainingCredits" INTEGER NOT NULL DEFAULT 0;

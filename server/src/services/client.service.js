@@ -66,28 +66,66 @@ export class ClientService {
     }
 
     async upsertClient(botId, chatId, name, profilePicUrl = null) {
-        // Find or create. If exists, update timestamp.
-        // We do upsert to handle concurrency
-        return await prisma.client.upsert({
+        const normalizedName = name?.trim() || null;
+
+        const updateExisting = async (record) => {
+            const updateData = { updatedAt: new Date() };
+
+            if (normalizedName && normalizedName !== record.name) {
+                updateData.name = normalizedName;
+            }
+
+            if (profilePicUrl && profilePicUrl !== record.profilePicUrl) {
+                updateData.profilePicUrl = profilePicUrl;
+            }
+
+            const client = await prisma.client.update({
+                where: { id: record.id },
+                data: updateData
+            });
+
+            return { client, isNew: false };
+        };
+
+        const existing = await prisma.client.findUnique({
             where: {
                 botId_chatId: { botId, chatId }
-            },
-            update: {
-                updatedAt: new Date(),
-                // Only update name if new name is provided (and not null/undefined from service)
-                ...(name ? { name } : {}),
-                // Update profile pic if provided
-                ...(profilePicUrl ? { profilePicUrl } : {})
-            },
-            create: {
-                botId,
-                chatId,
-                name: name || chatId, // Fallback to ID only on initial creation
-                profilePicUrl,
-                status: 'LEAD',
-                tags: '[]'
             }
         });
+
+        if (!existing) {
+            try {
+                const client = await prisma.client.create({
+                    data: {
+                        botId,
+                        chatId,
+                        name: normalizedName || chatId,
+                        profilePicUrl,
+                        status: 'LEAD',
+                        tags: '[]'
+                    }
+                });
+                return { client, isNew: true };
+            } catch (error) {
+                if (error?.code !== 'P2002') {
+                    throw error;
+                }
+
+                const concurrentRecord = await prisma.client.findUnique({
+                    where: {
+                        botId_chatId: { botId, chatId }
+                    }
+                });
+
+                if (concurrentRecord) {
+                    return updateExisting(concurrentRecord);
+                }
+
+                throw error;
+            }
+        }
+
+        return updateExisting(existing);
     }
 
     async updateClient(id, data) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthProvider';
 import {
     Users, UserPlus, Shield, X, CheckCircle, Lock,
@@ -15,6 +15,9 @@ export const AdminPage = () => {
     const [initialLoading, setInitialLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [settings, setSettings] = useState({ allowRegistration: true });
+    const [planCatalog, setPlanCatalog] = useState([]);
+    const [planCatalogLoading, setPlanCatalogLoading] = useState(false);
+    const [planCatalogError, setPlanCatalogError] = useState('');
 
     // User Creation State
     const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' });
@@ -41,14 +44,160 @@ export const AdminPage = () => {
     const [adminCreds, setAdminCreds] = useState({ username: '', password: '' });
     const [accessError, setAccessError] = useState('');
 
-    useEffect(() => {
-        if (user?.role?.toUpperCase() === 'ADMIN') {
-            fetchUsers();
-            fetchSettings();
-            setInitialLoading(false);
-        } else {
-            setInitialLoading(false);
+    const planLookup = useMemo(() => {
+        return planCatalog.reduce((acc, plan) => {
+            acc[plan.id] = plan;
+            return acc;
+        }, {});
+    }, [planCatalog]);
+
+    const fallbackPlans = useMemo(() => ([
+        {
+            id: 'none',
+            label: 'Sin plan',
+            description: 'Usuario sin suscripción activa.',
+            quotaType: 'restricted',
+            monthlyLimit: 0,
+            allowsPlatformKey: true,
+            requiresCustomKey: false,
+            upgradeHint: 'Contrata un plan para habilitar el bot.',
+            priceUsd: 0,
+            billingCycle: null,
+            currency: 'USD',
+            trialDays: 0,
+            visible: false
+        },
+        {
+            id: 'prueba',
+            label: 'Plan Trial 3 días',
+            description: 'Incluye 50 créditos para validar el bot en menos de 72h.',
+            quotaType: 'credits',
+            monthlyLimit: 50,
+            allowsPlatformKey: true,
+            requiresCustomKey: false,
+            upgradeHint: 'Tu prueba terminó. Contrata un plan para continuar.',
+            priceUsd: 0,
+            billingCycle: 'trial',
+            currency: 'USD',
+            trialDays: 3,
+            visible: true
+        },
+        {
+            id: 'starter',
+            label: 'Plan Esencial',
+            description: '800 créditos mensuales para pequeños negocios.',
+            quotaType: 'credits',
+            monthlyLimit: 800,
+            allowsPlatformKey: true,
+            requiresCustomKey: false,
+            upgradeHint: 'Alcanza Infinito ($17) o Business para más mensajes.',
+            priceUsd: 12,
+            billingCycle: 'monthly',
+            currency: 'USD',
+            trialDays: 0,
+            visible: true
+        },
+        {
+            id: 'infinito',
+            label: 'Plan Infinito (BYOK)',
+            description: 'Uso ilimitado con tu propia API Key de OpenAI.',
+            quotaType: 'custom-key',
+            monthlyLimit: null,
+            allowsPlatformKey: false,
+            requiresCustomKey: true,
+            upgradeHint: 'Agrega tu propia OpenAI API Key para uso ilimitado.',
+            priceUsd: 17,
+            billingCycle: 'monthly',
+            currency: 'USD',
+            trialDays: 0,
+            visible: true
+        },
+        {
+            id: 'business',
+            label: 'Plan Business',
+            description: '2,500 créditos al mes + soporte prioritario.',
+            quotaType: 'credits',
+            monthlyLimit: 2500,
+            allowsPlatformKey: true,
+            requiresCustomKey: false,
+            upgradeHint: 'Contacta a soporte para subir a Enterprise.',
+            priceUsd: 25,
+            billingCycle: 'monthly',
+            currency: 'USD',
+            trialDays: 0,
+            visible: true
         }
+    ]), []);
+
+    const resolvePlanMeta = (planId) => planLookup[planId] || fallbackPlans.find((plan) => plan.id === planId) || planLookup.none || fallbackPlans[0];
+
+    const featuredPlans = useMemo(() => planCatalog.filter((plan) => plan.visible !== false && plan.id !== 'admin' && plan.id !== 'none'), [planCatalog]);
+
+    const editablePlanOptions = useMemo(() => {
+        const catalog = planCatalog.length ? planCatalog : fallbackPlans;
+        return catalog.filter((plan) => plan.id !== 'admin');
+    }, [planCatalog, fallbackPlans]);
+
+    const selectedEditPlanMeta = useMemo(() => resolvePlanMeta(editForm.planType), [editForm.planType, planLookup, fallbackPlans]);
+
+    const formatPlanPrice = (plan) => {
+        if (!plan) return 'Sin información';
+        if (plan.billingCycle === 'trial') {
+            return `${plan.trialDays || 0} días gratis`;
+        }
+        if (plan.priceUsd === 0 || plan.priceUsd == null) {
+            return 'Incluido';
+        }
+        const cycleLabel = plan.billingCycle === 'monthly' ? 'mes' : plan.billingCycle === 'annual' ? 'año' : plan.billingCycle === 'lifetime' ? 'de por vida' : (plan.billingCycle || '').toLowerCase();
+        return `$${plan.priceUsd}/${cycleLabel}`;
+    };
+
+    const formatCreditLabel = (plan, user) => {
+        if (!plan) return '—';
+        if (plan.quotaType === 'credits') {
+            const limit = plan.monthlyLimit ?? user?.monthlyLimit;
+            return `${limit ?? '—'} créditos / mes`;
+        }
+        if (plan.quotaType === 'custom-key') {
+            return 'BYOK · Ilimitado';
+        }
+        if (plan.quotaType === 'unlimited') {
+            return 'Ilimitado';
+        }
+        return 'Restringido';
+    };
+
+    const getPlanBadgeTone = (plan) => {
+        if (!plan) return 'bg-white/5 text-white/40 border-white/10';
+        if (plan.id === 'prueba') return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+        if (plan.id === 'starter') return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20';
+        if (plan.id === 'business') return 'bg-blue-500/10 text-blue-300 border-blue-500/20';
+        if (plan.id === 'infinito') return 'bg-purple-500/10 text-purple-300 border-purple-500/20';
+        return 'bg-white/5 text-white/40 border-white/10';
+    };
+
+    const summarizeExpirationLabel = (plan) => {
+        if (!plan) return '—';
+    if (plan.billingCycle === 'trial') return `${plan.trialDays || 0} días de vigencia`;
+        if (plan.billingCycle === 'monthly') return 'Renueva cada 30 días';
+        if (plan.billingCycle === 'annual') return 'Renueva cada 12 meses';
+        if (plan.billingCycle === 'lifetime') return 'Sin caducidad automática';
+        return 'Expiración manual';
+    };
+
+    useEffect(() => {
+        const bootstrap = async () => {
+            if (user?.role?.toUpperCase() === 'ADMIN') {
+                await Promise.all([
+                    fetchUsers(),
+                    fetchSettings(),
+                    fetchPlanCatalog()
+                ]);
+            }
+            setInitialLoading(false);
+        };
+        bootstrap();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user]);
 
     const fetchSettings = async () => {
@@ -57,6 +206,20 @@ export const AdminPage = () => {
             setSettings(res.data);
         } catch (e) {
             console.error('Failed to fetch settings', e);
+        }
+    };
+
+    const fetchPlanCatalog = async () => {
+        try {
+            setPlanCatalogLoading(true);
+            const res = await api.get('/plans/catalog');
+            setPlanCatalog(res.data?.plans || []);
+        } catch (e) {
+            console.error('Failed to fetch plan catalog', e);
+            setPlanCatalogError('No se pudo cargar el catálogo de planes');
+            setTimeout(() => setPlanCatalogError(''), 4000);
+        } finally {
+            setPlanCatalogLoading(false);
         }
     };
 
@@ -118,11 +281,12 @@ export const AdminPage = () => {
     };
 
     const openEditModal = (u) => {
+        const sanitizedPlan = resolvePlanMeta(u.planType)?.id || editablePlanOptions[0]?.id || 'none';
         setEditTarget(u);
         setEditForm({
             username: u.username || '',
-            role: u.role || 'user',
-            planType: u.planType || 'none',
+            role: u.role === 'prueba' ? 'user' : (u.role || 'user'),
+            planType: sanitizedPlan,
             expiresAt: u.expiresAt ? new Date(u.expiresAt).toISOString().split('T')[0] : ''
         });
         setEditError('');
@@ -397,6 +561,48 @@ export const AdminPage = () => {
                     </div>
                 </dialog>
 
+                {planCatalogError && (
+                    <div className="p-4 rounded-2xl border border-red-500/20 bg-red-500/5 text-red-200 text-sm">
+                        {planCatalogError}
+                    </div>
+                )}
+
+                {planCatalogLoading && featuredPlans.length === 0 && (
+                    <div className="p-4 rounded-2xl border border-white/5 bg-white/[0.02] text-sm text-wa-secondary">
+                        Cargando catálogo de planes...
+                    </div>
+                )}
+
+                {featuredPlans.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                        {featuredPlans.map((plan) => (
+                            <div key={plan.id} className="rounded-[2rem] border border-white/5 bg-gradient-to-br from-white/[0.03] to-white/[0.01] p-6 flex flex-col gap-4 shadow-lg shadow-black/20">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-wa-secondary">Plan</p>
+                                        <h3 className="text-xl font-bold text-white">{plan.label}</h3>
+                                    </div>
+                                    <span className={clsx('text-[10px] font-bold px-3 py-1 rounded-full border', plan.billingCycle === 'trial' ? 'border-amber-400/40 text-amber-300 bg-amber-500/10' : 'border-purple-400/30 text-purple-200 bg-purple-500/10')}>
+                                        {plan.billingCycle === 'monthly' ? 'Mensual' : plan.billingCycle === 'trial' ? 'Trial' : 'Flexible'}
+                                    </span>
+                                </div>
+                                <div className="text-3xl font-black text-white">
+                                    {plan.priceUsd ? `$${plan.priceUsd}` : 'GRATIS'}
+                                    {plan.billingCycle === 'monthly' && <span className="text-sm font-medium text-wa-secondary ml-1">/ mes</span>}
+                                    {plan.billingCycle === 'trial' && plan.trialDays ? <span className="text-sm font-medium text-wa-secondary ml-1">· {plan.trialDays} días</span> : null}
+                                </div>
+                                <p className="text-sm text-wa-secondary leading-snug min-h-[48px]">{plan.description}</p>
+                                <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-widest text-white/70">
+                                    <span>
+                                        {plan.quotaType === 'credits' && plan.monthlyLimit ? `${plan.monthlyLimit} créditos / mes` : plan.quotaType === 'custom-key' ? 'BYOK · Ilimitado' : 'Ilimitado'}
+                                    </span>
+                                    <span className="text-wa-secondary">{plan.requiresCustomKey ? 'BYOK' : 'Key incluida'}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
                 {/* Table Section */}
                 <div className="glass-panel rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl relative">
                     {/* Table Toolbar */}
@@ -424,72 +630,90 @@ export const AdminPage = () => {
                                     <th className="px-8 py-5">Usuario</th>
                                     <th className="px-6 py-5">Rol</th>
                                     <th className="px-6 py-5">Plan</th>
+                                    <th className="px-6 py-5">Créditos</th>
                                     <th className="px-6 py-5">Vencimiento</th>
                                     <th className="px-6 py-5">Estado</th>
                                     <th className="px-8 py-5 text-right">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
-                                {filteredUsers.map((u) => (
-                                    <tr key={u.id} className="group hover:bg-white/[0.02] transition-colors">
-                                        <td className="px-8 py-5">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-white/10 to-transparent flex items-center justify-center border border-white/5">
-                                                    <UserCircle className="text-white/40" size={20} />
+                                {filteredUsers.map((u) => {
+                                    const planMeta = planLookup[u.planType] || planLookup.none || null;
+                                    return (
+                                        <tr key={u.id} className="group hover:bg-white/[0.02] transition-colors">
+                                            <td className="px-8 py-5">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-white/10 to-transparent flex items-center justify-center border border-white/5">
+                                                        <UserCircle className="text-white/40" size={20} />
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-bold text-white">{u.username}</div>
+                                                        <div className="text-[10px] font-mono text-white/20">ID: {u.id.substring(0, 8)}</div>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <div className="font-bold text-white">{u.username}</div>
-                                                    <div className="text-[10px] font-mono text-white/20">ID: {u.id.substring(0, 8)}</div>
+                                            </td>
+                                            <td className="px-6 py-5">
+                                                <span className={clsx(
+                                                    "text-[9px] font-black px-2 py-1 rounded-md tracking-wider border",
+                                                    u.role?.toUpperCase() === 'ADMIN' ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
+                                                        u.role?.toUpperCase() === 'PRUEBA' ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
+                                                            "bg-white/5 text-white/40 border-white/10"
+                                                )}>
+                                                    {u.role?.toUpperCase()}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-5">
+                                                <div className="flex flex-col gap-1 text-sm text-white/80">
+                                                    <div className="flex items-center gap-2">
+                                                        <Calendar size={14} className="text-purple-400/50" />
+                                                        <span className="font-semibold">{planMeta?.label || (u.planType || 'Sin plan')}</span>
+                                                    </div>
+                                                    <div className="text-[11px] text-wa-secondary">{formatPlanPrice(planMeta)}</div>
+                                                    <div className={clsx('text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border w-fit', getPlanBadgeTone(planMeta))}>
+                                                        {(planMeta?.id || u.planType || 'none').toUpperCase()}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-5">
-                                            <span className={clsx(
-                                                "text-[9px] font-black px-2 py-1 rounded-md tracking-wider border",
-                                                u.role?.toUpperCase() === 'ADMIN' ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
-                                                    u.role?.toUpperCase() === 'PRUEBA' ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
-                                                        "bg-white/5 text-white/40 border-white/10"
-                                            )}>
-                                                {u.role?.toUpperCase()}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-5">
-                                            <div className="flex items-center gap-2 text-sm text-white/60">
-                                                <Calendar size={14} className="text-purple-400/50" />
-                                                <span className="capitalize">{u.planType || 'None'}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-5">
-                                            <div className="text-sm font-mono text-white/60">
-                                                {u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : '∞'}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-5">
-                                            <div className={clsx(
-                                                "flex items-center gap-2 text-[10px] font-bold uppercase",
-                                                checkStatus(u) === 'active' ? "text-green-400" : "text-red-400"
-                                            )}>
-                                                <div className={clsx("w-1.5 h-1.5 rounded-full animate-pulse", checkStatus(u) === 'active' ? "bg-green-400" : "bg-red-400")}></div>
-                                                {checkStatus(u) === 'active' ? 'Activo' : 'Expirado'}
-                                            </div>
-                                        </td>
-                                        <td className="px-8 py-5 text-right">
-                                            <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => openEditModal(u)} className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-all text-wa-secondary hover:text-white" title="Editar">
-                                                    <Edit3 size={16} />
-                                                </button>
-                                                <button onClick={() => setResetTarget(u)} className="p-2.5 bg-white/5 hover:bg-yellow-500/20 rounded-xl transition-all text-wa-secondary hover:text-yellow-400" title="Password">
-                                                    <Key size={16} />
-                                                </button>
-                                                {u.id !== user?.id && (
-                                                    <button onClick={() => handleDeleteUser(u)} className="p-2.5 bg-white/5 hover:bg-red-500/20 rounded-xl transition-all text-wa-secondary hover:text-red-400" title="Eliminar">
-                                                        <Trash2 size={16} />
+                                            </td>
+                                            <td className="px-6 py-5">
+                                                <div className="text-sm font-mono text-white/70">
+                                                    {typeof u.remainingCredits === 'number' ? `${u.remainingCredits}` : '—'}
+                                                </div>
+                                                <div className="text-[10px] text-wa-secondary uppercase tracking-wide">
+                                                    {formatCreditLabel(planMeta, u)}
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-5">
+                                                <div className="text-sm font-mono text-white/60">
+                                                    {u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : '∞'}
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-5">
+                                                <div className={clsx(
+                                                    "flex items-center gap-2 text-[10px] font-bold uppercase",
+                                                    checkStatus(u) === 'active' ? "text-green-400" : "text-red-400"
+                                                )}>
+                                                    <div className={clsx("w-1.5 h-1.5 rounded-full animate-pulse", checkStatus(u) === 'active' ? "bg-green-400" : "bg-red-400")}></div>
+                                                    {checkStatus(u) === 'active' ? 'Activo' : 'Expirado'}
+                                                </div>
+                                            </td>
+                                            <td className="px-8 py-5 text-right">
+                                                <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={() => openEditModal(u)} className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-all text-wa-secondary hover:text-white" title="Editar">
+                                                        <Edit3 size={16} />
                                                     </button>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                                    <button onClick={() => setResetTarget(u)} className="p-2.5 bg-white/5 hover:bg-yellow-500/20 rounded-xl transition-all text-wa-secondary hover:text-yellow-400" title="Password">
+                                                        <Key size={16} />
+                                                    </button>
+                                                    {u.id !== user?.id && (
+                                                        <button onClick={() => handleDeleteUser(u)} className="p-2.5 bg-white/5 hover:bg-red-500/20 rounded-xl transition-all text-wa-secondary hover:text-red-400" title="Eliminar">
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                         {
@@ -537,7 +761,6 @@ export const AdminPage = () => {
                                         <label className="text-[10px] font-black uppercase text-wa-secondary tracking-widest pl-2">Rol del Sistema</label>
                                         <select className="w-full glass-input px-5 py-3 rounded-2xl border-white/5" value={editForm.role} onChange={e => setEditForm({ ...editForm, role: e.target.value })}>
                                             <option value="user" className="bg-neutral-900">Usuario Dashboard</option>
-                                            <option value="prueba" className="bg-neutral-900">Cuenta de Prueba</option>
                                             <option value="admin" className="bg-neutral-900">Administrador</option>
                                         </select>
                                     </div>
@@ -551,18 +774,53 @@ export const AdminPage = () => {
                                     <div className="grid grid-cols-2 gap-6">
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black uppercase text-wa-secondary tracking-widest">Plan Actual</label>
-                                            <select className="w-full glass-input px-4 py-3 rounded-xl border-white/5" value={editForm.planType} onChange={e => setEditForm({ ...editForm, planType: e.target.value })}>
-                                                <option value="none" className="bg-neutral-900">Sin Plan</option>
-                                                <option value="prueba" className="bg-neutral-900">Prueba (Trial)</option>
-                                                <option value="mensual" className="bg-neutral-900">Mensual</option>
-                                                <option value="trimestral" className="bg-neutral-900">Trimestral</option>
-                                                <option value="anual" className="bg-neutral-900">Anual</option>
+                                            <select
+                                                className="w-full glass-input px-4 py-3 rounded-xl border-white/5"
+                                                value={editForm.planType}
+                                                onChange={e => setEditForm({ ...editForm, planType: e.target.value })}
+                                            >
+                                                {editablePlanOptions.map((plan) => (
+                                                    <option key={plan.id} value={plan.id} className="bg-neutral-900">
+                                                        {plan.label}
+                                                    </option>
+                                                ))}
                                             </select>
+                                            <p className="text-[11px] text-wa-secondary mt-1">
+                                                {selectedEditPlanMeta?.description || 'Selecciona un plan del catálogo oficial'}
+                                            </p>
                                         </div>
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black uppercase text-wa-secondary tracking-widest">Fecha Expiración</label>
                                             <input type="date" className="w-full glass-input px-4 py-3 rounded-xl border-white/5" value={editForm.expiresAt} onChange={e => setEditForm({ ...editForm, expiresAt: e.target.value })} />
                                         </div>
+                                        {selectedEditPlanMeta && (
+                                            <div className="col-span-2 bg-white/[0.03] border border-white/5 rounded-2xl p-4 space-y-3">
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span className="text-wa-secondary">Precio oficial</span>
+                                                    <span className="font-semibold text-white">{formatPlanPrice(selectedEditPlanMeta)}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span className="text-wa-secondary">Cobertura</span>
+                                                    <span className="font-semibold text-white">{formatCreditLabel(selectedEditPlanMeta, editTarget)}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span className="text-wa-secondary">Expiración automática</span>
+                                                    <span className="font-semibold text-white">{summarizeExpirationLabel(selectedEditPlanMeta)}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span className="text-wa-secondary">Acceso a llave</span>
+                                                    <span className="font-semibold text-white">
+                                                        {selectedEditPlanMeta.quotaType === 'custom-key' ? 'Requiere BYOK' : 'Incluye clave del bot'}
+                                                    </span>
+                                                </div>
+                                                {selectedEditPlanMeta.upgradeHint && (
+                                                    <p className="text-[11px] text-wa-secondary flex items-center gap-2">
+                                                        <ChevronRight size={14} className="text-purple-400" />
+                                                        {selectedEditPlanMeta.upgradeHint}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="space-y-3">
@@ -604,8 +862,7 @@ export const AdminPage = () => {
                             <input type="text" placeholder="ID de Usuario" className="w-full glass-input px-5 py-3 rounded-2xl border-white/5" required value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} />
                             <input type="text" placeholder="Contraseña Temporal" className="w-full glass-input px-5 py-3 rounded-2xl border-white/5" required value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
                             <select className="w-full glass-input px-5 py-3 rounded-2xl border-white/5" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
-                                <option value="prueba" className="bg-neutral-900">Prueba (3 días)</option>
-                                <option value="user" className="bg-neutral-900">Usuario Estandar</option>
+                                <option value="user" className="bg-neutral-900">Usuario estándar</option>
                                 <option value="admin" className="bg-neutral-900">Administrador</option>
                             </select>
                             <button type="submit" className="w-full bg-white text-black font-black py-4 rounded-2xl mt-4 hover:bg-gray-200 transition-all">CONSTRUIR CUENTA</button>

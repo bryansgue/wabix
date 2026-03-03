@@ -1,10 +1,66 @@
 import OpenAI from 'openai';
-import { config } from '../config/env.js';
-import { storeService } from './store.service.js';
 import fs from 'fs';
+import { config as envConfig } from '../config/env.js';
+import { prisma } from './db.service.js';
+import { getPlanPolicy, PlanLimitError } from './plan.service.js';
 
 class OpenAIService {
     constructor() { }
+
+    async _getUserContext(userId) {
+        if (!userId) return null;
+        return prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, username: true, role: true, planType: true, remainingCredits: true },
+        });
+    }
+
+    async _prepareClient({ userId, botConfig = {}, chargeCredit = false }) {
+        const user = await this._getUserContext(userId);
+        if (!user) {
+            throw new PlanLimitError('USER_NOT_FOUND', 'No pudimos validar tu cuenta. Inicia sesión nuevamente.');
+        }
+
+        const policy = getPlanPolicy(user.planType || 'none', user.role || 'user');
+        const customKey = botConfig?.openaiApiKey?.trim();
+        const platformKey = policy.allowsPlatformKey !== false ? envConfig.openaiApiKey : null;
+
+        if (policy.quotaType === 'custom-key' && !customKey) {
+            throw new PlanLimitError('CUSTOM_KEY_REQUIRED', 'Tu plan requiere agregar tu propia OpenAI API Key en el Dashboard.');
+        }
+
+        const apiKey = customKey || platformKey;
+        if (!apiKey) {
+            throw new PlanLimitError('MISSING_OPENAI_KEY', 'No hay una API Key configurada. Agrega una en Configuración.');
+        }
+
+        let reservedCredit = false;
+        if (chargeCredit && policy.quotaType === 'credits') {
+            const updateResult = await prisma.user.updateMany({
+                where: { id: user.id, remainingCredits: { gt: 0 } },
+                data: { remainingCredits: { decrement: 1 } },
+            });
+
+            if (!updateResult.count) {
+                throw new PlanLimitError('NO_CREDITS', 'Te quedaste sin mensajes incluidos en tu plan. Actualiza o agrega una API Key propia.');
+            }
+            reservedCredit = true;
+        }
+
+        return { apiKey, policy, user, reservedCredit };
+    }
+
+    async _refundCredit(userId) {
+        if (!userId) return;
+        try {
+            await prisma.user.update({
+                where: { id: userId },
+                data: { remainingCredits: { increment: 1 } },
+            });
+        } catch (err) {
+            console.error('Failed to refund credit:', err.message);
+        }
+    }
 
     /**
      * Validates OpenAI completion response and safely extracts content
@@ -56,20 +112,22 @@ class OpenAIService {
         return content;
     }
 
-    async generateResponse(userMessage, history = [], imageBase64 = null, config = null, mimeType = 'image/jpeg') {
+    async generateResponse({ userId, userMessage, history = [], imageBase64 = null, config = null, mimeType = 'image/jpeg' }) {
+        const currentConfig = config || {};
+        let context = null;
+
         try {
-            const currentConfig = config || (await storeService.getConfig()); // Fallback to default if not provided
-
-            if (!currentConfig.openaiApiKey) {
-                console.error('OpenAI API Key is missing in configuration');
-                return '⚠️ Error: No se ha configurado la API Key de OpenAI. Por favor agrégala en el Dashboard.';
-            }
-
-            const openai = new OpenAI({
-                apiKey: currentConfig.openaiApiKey,
+            context = await this._prepareClient({
+                userId,
+                botConfig: currentConfig,
+                chargeCredit: true,
             });
 
-            let systemMessageContent = currentConfig.systemPrompt;
+            const { apiKey } = context;
+
+            const openai = new OpenAI({ apiKey });
+
+            let systemMessageContent = currentConfig.systemPrompt || envConfig.meta?.systemPrompt || 'Eres Neo, un asistente virtual profesional y útil.';
 
             // Inject Business Context if available
             if (currentConfig.businessContext) {
@@ -117,7 +175,7 @@ class OpenAIService {
 
                 const completion = await openai.chat.completions.create({
                     messages: messages,
-                    model: currentConfig.model || 'gpt-3.5-turbo',
+                    model: currentConfig.model || envConfig.meta?.model || 'gpt-3.5-turbo',
                     temperature: parseFloat(currentConfig.temperature) || 0.7,
                     max_tokens: parseInt(currentConfig.maxTokens) || 150,
                 });
@@ -126,23 +184,29 @@ class OpenAIService {
                 return this._validateAndExtractContent(completion);
             }
         } catch (error) {
+            if (error instanceof PlanLimitError) {
+                throw error;
+            }
+
+            if (context?.reservedCredit && context?.user?.id) {
+                await this._refundCredit(context.user.id);
+            }
+
             console.error('OpenAI Error Details:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
             throw error; // Let the caller (WhatsAppService) handle the fallback message
         }
     }
 
-    async transcribeAudio(audioPath, config = null) {
+    async transcribeAudio({ userId, audioPath, config = null }) {
         try {
-            const currentConfig = config || (await storeService.getConfig());
-
-            if (!currentConfig.openaiApiKey) {
-                console.error('OpenAI API Key is missing for transcription');
-                return null;
-            }
-
-            const openai = new OpenAI({
-                apiKey: currentConfig.openaiApiKey,
+            const currentConfig = config || {};
+            const { apiKey } = await this._prepareClient({
+                userId,
+                botConfig: currentConfig,
+                chargeCredit: false,
             });
+
+            const openai = new OpenAI({ apiKey });
 
             const transcription = await openai.audio.transcriptions.create({
                 file: fs.createReadStream(audioPath),
@@ -151,6 +215,9 @@ class OpenAIService {
 
             return transcription.text;
         } catch (error) {
+            if (error instanceof PlanLimitError) {
+                throw error;
+            }
             console.error('Whisper Error:', error);
             return null;
         }

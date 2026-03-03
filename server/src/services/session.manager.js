@@ -4,12 +4,50 @@ import { StoreService } from './store.service.js';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../config/validate-env.js';
 
+const MAX_PARALLEL_CONNECTIONS = Math.max(parseInt(process.env.MAX_PARALLEL_WA_CONNECT || '3', 10), 1);
+const RESTORE_BATCH_SIZE = Math.max(parseInt(process.env.SESSION_RESTORE_BATCH_SIZE || '5', 10), 1);
+const RESTORE_BATCH_DELAY_MS = Math.max(parseInt(process.env.SESSION_RESTORE_DELAY_MS || '2000', 10), 0);
+const SESSION_START_BASE_DELAY_MS = Math.max(parseInt(process.env.SESSION_START_BASE_DELAY_MS || '500', 10), 0);
+const SESSION_START_JITTER_MS = Math.max(parseInt(process.env.SESSION_START_JITTER_MS || '750', 10), 0);
+
+class ConnectionSemaphore {
+    constructor(limit) {
+        this.limit = limit;
+        this.active = 0;
+        this.queue = [];
+    }
+
+    acquire() {
+        return new Promise((resolve) => {
+            const attempt = () => {
+                if (this.active < this.limit) {
+                    this.active += 1;
+                    resolve();
+                } else {
+                    this.queue.push(attempt);
+                }
+            };
+            attempt();
+        });
+    }
+
+    release() {
+        if (this.active > 0) {
+            this.active -= 1;
+        }
+        const next = this.queue.shift();
+        if (next) {
+            next();
+        }
+    }
+}
 
 class SessionManager {
     constructor() {
         this.sessions = new Map(); // userId -> WhatsAppService instance
         this.initializingSessions = new Map(); // userId -> Promise
         this.io = null;
+        this.connectionSemaphore = new ConnectionSemaphore(MAX_PARALLEL_CONNECTIONS);
     }
 
     async restoreSessions() {
@@ -20,8 +58,8 @@ class SessionManager {
 
             // --- THUNDERING HERD PROTECTION ---
             // Process in chunks of 5 users
-            const CHUNK_SIZE = 5;
-            const DELAY_MS = 2000;
+            const CHUNK_SIZE = RESTORE_BATCH_SIZE;
+            const DELAY_MS = RESTORE_BATCH_DELAY_MS;
 
             for (let i = 0; i < users.length; i += CHUNK_SIZE) {
                 const chunk = users.slice(i, i + CHUNK_SIZE);
@@ -36,7 +74,7 @@ class SessionManager {
                 }));
 
                 // Wait before next chunk (unless it's the last one)
-                if (i + CHUNK_SIZE < users.length) {
+                if (i + CHUNK_SIZE < users.length && DELAY_MS > 0) {
                     console.log(`[SessionManager] Waiting ${DELAY_MS}ms before next chunk...`);
                     await new Promise(resolve => setTimeout(resolve, DELAY_MS));
                 }
@@ -157,6 +195,9 @@ class SessionManager {
 
     async _initializeSession(userId) {
         try {
+            await this.connectionSemaphore.acquire();
+            await this._applyStartJitter();
+
             // Instantiate dedicated Store
             const userStore = new StoreService(userId);
             // await userStore.init(); // Not needed with Prisma
@@ -178,6 +219,15 @@ class SessionManager {
         } finally {
             // Cleanup initialization lock
             this.initializingSessions.delete(userId);
+            this.connectionSemaphore.release();
+        }
+    }
+
+    async _applyStartJitter() {
+        const jitter = SESSION_START_JITTER_MS ? Math.floor(Math.random() * (SESSION_START_JITTER_MS + 1)) : 0;
+        const delay = SESSION_START_BASE_DELAY_MS + jitter;
+        if (delay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
         }
     }
 

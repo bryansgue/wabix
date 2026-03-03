@@ -19,6 +19,10 @@ model User {
   updatedAt    DateTime  @updatedAt
   expiresAt    DateTime? 
   planType     String?   @default("none") // 'mensual', 'trimestral', 'anual' or 'none'
+  
+  // SaaS Limits & Credits
+  remainingCredits Int    @default(0)    // IA messages remaining
+  monthlyLimit     Int    @default(0)    // Total messages allowed per month
 
   // Relations
   bot          Bot?

@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { prisma } from './db.service.js';
 import { JWT_SECRET } from '../config/validate-env.js';
+import { getDefaultExpirationDate, getInitialCredits, getPlanPolicy } from './plan.service.js';
 
 
 class AuthService {
@@ -18,9 +19,9 @@ class AuthService {
                         id: 'singleton',
                         allowRegistration: true,
                         businessContact: '',
-                        priceMonthly: '0',
-                        priceQuarterly: '0',
-                        priceAnnual: '0',
+                        priceMonthly: '19', // Adjusted for Starter/LATAM market
+                        priceQuarterly: '49',
+                        priceAnnual: '159',
                         openaiLink: 'https://openai.com',
                         facebookLink: 'https://facebook.com/autobot',
                         credits: 'AutoBOT AI © 2026',
@@ -77,9 +78,8 @@ class AuthService {
     async register(username, password, role = 'user') {
         const settings = await this.getSettings();
 
-        // Count users to determine if this is the first one (admin)
-        const userCount = await prisma.user.count();
-        if (userCount > 0 && !settings.allowRegistration) {
+        // Check if registration is allowed (only allows non-admin registration)
+        if (!settings.allowRegistration) {
             throw new Error('Public registration is currently disabled.');
         }
 
@@ -92,19 +92,16 @@ class AuthService {
         const saltRounds = 10;
         const passwordHash = await bcrypt.hash(password, saltRounds);
 
-        // Auto-assign admin role to the first user
-        const isFirstUser = userCount === 0;
-        const finalRole = isFirstUser ? 'admin' : (role === 'admin' ? 'admin' : 'prueba');
+        // Only 'user' role allowed via registration
+        // Admin must exist by default or be created manually
+        const finalRole = 'user';
 
-        // Set default 3-day expiration for non-admin users
-        let expiresAt = null;
-        let planType = 'none';
+        // Determine plan metadata for regular users
+        let planType = 'prueba'; // All new users start as trial
+        const planPolicy = getPlanPolicy(planType, finalRole);
+        const initialCredits = getInitialCredits(planType, finalRole);
 
-        if (!isFirstUser && finalRole !== 'admin') {
-            expiresAt = new Date();
-            expiresAt.setDate(expiresAt.getDate() + 3);
-            planType = 'prueba';
-        }
+    const expiresAt = getDefaultExpirationDate(planType, finalRole);
 
         const newUser = await prisma.user.create({
             data: {
@@ -112,7 +109,9 @@ class AuthService {
                 passwordHash,
                 role: finalRole,
                 expiresAt,
-                planType
+                planType,
+                remainingCredits: initialCredits,
+                monthlyLimit: planPolicy.monthlyLimit ?? 0
             },
         });
 
@@ -147,15 +146,33 @@ class AuthService {
     }
 
     async getAllUsers() {
-        return await prisma.user.findMany({
+        const users = await prisma.user.findMany({
             select: {
                 id: true,
                 username: true,
                 role: true,
                 createdAt: true,
                 expiresAt: true,
-                planType: true
+                planType: true,
+                monthlyLimit: true,
+                remainingCredits: true
             },
+        });
+
+        return users.map((user) => {
+            const policy = getPlanPolicy(user.planType || 'none', user.role || 'user');
+            return {
+                ...user,
+                planLabel: policy.label,
+                planDescription: policy.description,
+                planUpgradeHint: policy.upgradeHint,
+                planPriceUsd: policy.priceUsd,
+                planBillingCycle: policy.billingCycle,
+                planCurrency: policy.currency,
+                planMonthlyLimit: policy.monthlyLimit,
+                planQuotaType: policy.quotaType,
+                planTrialDays: policy.trialDays ?? 0
+            };
         });
     }
 
@@ -174,14 +191,47 @@ class AuthService {
 
     async updateUser(userId, data) {
         try {
+            const currentUser = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { role: true, planType: true, monthlyLimit: true },
+            });
+
+            if (!currentUser) {
+                throw Object.assign(new Error('User not found'), { code: 'P2025' });
+            }
+
+            const nextRole = data.role || currentUser.role;
+            const updateData = {};
+            if (data.username) updateData.username = data.username;
+            if (data.role) updateData.role = data.role;
+            if (data.expiresAt) updateData.expiresAt = new Date(data.expiresAt);
+            if (data.planType) updateData.planType = data.planType;
+
+            const planChanged = data.planType && data.planType !== currentUser.planType;
+
+            if (data.planType) {
+                const policy = getPlanPolicy(data.planType, nextRole);
+                updateData.monthlyLimit = policy.monthlyLimit ?? 0;
+
+                if (policy.quotaType === 'credits') {
+                    updateData.remainingCredits = typeof data.remainingCredits === 'number'
+                        ? data.remainingCredits
+                        : policy.monthlyLimit ?? currentUser.monthlyLimit ?? 0;
+                } else if (typeof data.remainingCredits === 'number') {
+                    updateData.remainingCredits = data.remainingCredits;
+                }
+
+                if (planChanged && !data.expiresAt) {
+                    updateData.expiresAt = getDefaultExpirationDate(data.planType, nextRole) ?? null;
+                }
+            }
+            if (typeof data.remainingCredits === 'number' && !data.planType) {
+                updateData.remainingCredits = data.remainingCredits;
+            }
+
             const updatedUser = await prisma.user.update({
                 where: { id: userId },
-                data: {
-                    username: data.username,
-                    role: data.role,
-                    expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
-                    planType: data.planType,
-                },
+                data: updateData,
             });
             return {
                 id: updatedUser.id,
