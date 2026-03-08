@@ -46,6 +46,8 @@ model Bot {
   messages              Message[]
   reminders             Reminder[]
   clients               Client[]
+  states                State[]
+  tags                  Tag[]
 }
 
 model Message {
@@ -92,9 +94,9 @@ model Client {
   profilePicUrl String?  // Profile picture URL
   
   // CRM Fields
-  status    String   @default("LEAD") // LEAD, CUSTOMER, ARCHIVED, BLOCKED
+  status    String   @default("LEAD") // Legacy status field (kept for backward compatibility)
   notes     String?
-  tags      String   @default("[]") // JSON string for tags
+  tags      String   @default("[]") // Deprecated JSON string for tags
   lastBroadcastAt DateTime? // Track last broadcast time
   isBotPaused    Boolean   @default(false) // Manual indefinite pause
   botPausedUntil DateTime? // Automatic temporary pause
@@ -106,8 +108,57 @@ model Client {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // New State & Tags relations
+  stateId String?
+  state   State?   @relation(fields: [stateId], references: [id], onDelete: SetNull)
+  tagLinks ContactTag[]
+
   @@unique([botId, chatId])
   @@index([botId, status])
+}
+
+
+model State {
+  id          String   @id @default(uuid())
+  botId       String
+  bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  name        String
+  orderIndex  Int      @default(0)
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clients     Client[]
+
+  @@unique([botId, name])
+  @@index([botId, orderIndex])
+}
+
+model Tag {
+  id        String   @id @default(uuid())
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  name      String
+  color     String   @default("#00a884")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contactLinks ContactTag[]
+
+  @@unique([botId, name])
+  @@index([botId])
+}
+
+model ContactTag {
+  clientId  String
+  tagId     String
+  assignedAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, tagId])
+  @@index([tagId])
 }
 
 model SystemSettings {

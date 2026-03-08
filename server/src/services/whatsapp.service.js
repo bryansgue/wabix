@@ -54,6 +54,9 @@ export class WhatsAppService {
         this.lastOutboundTimestamp = 0;
         this.isConnecting = false;
         this.deduplicationCleanupInterval = null; // Will hold the cleanup interval
+        this.messageBuffers = new Map();
+        this.messageBufferWindow = Math.max(parseInt(process.env.MESSAGE_BUFFER_WINDOW_MS || '3500', 10), 500);
+        this.messageBufferMax = Math.max(parseInt(process.env.MESSAGE_BUFFER_MAX || '3', 10), 1);
     }
 
 
@@ -495,6 +498,14 @@ export class WhatsAppService {
                         mediaType
                     );
                     this.emitNewMessage(sentMsg); // Live update frontend
+                    this.emitClientUpdate({
+                        type: 'CLIENT_ACTIVITY',
+                        chatId,
+                        role: 'assistant',
+                        messageId: sentMsg.id,
+                        timestamp: sentMsg.timestamp,
+                        source: 'manual_reply'
+                    });
                 } catch (err) {
                     console.error(`[${this.userId}] Error saving manual message:`, err);
                 }
@@ -654,107 +665,206 @@ export class WhatsAppService {
                     false, // isBroadcast
                     false, // isManual
                     messageId,
-                    'READ',
+                    'RECEIVED',
                     false, // isReminder
                     mediaUrl,
                     mediaType
                 );
                 this.emitNewMessage(userMsg);
+                this.emitClientUpdate({
+                    type: 'CLIENT_ACTIVITY',
+                    chatId,
+                    role: 'user',
+                    messageId: userMsg.id,
+                    timestamp: userMsg.timestamp,
+                    source: 'incoming_message'
+                });
 
                 if (isSilenced) {
                     console.log(`[${this.userId}] Chat ${chatId} is silenced. Skipping AI response.`);
                     return;
                 }
 
+                const canBuffer =
+                    config.enableMessageBuffering !== false &&
+                    !imageBase64 &&
+                    !audioMessage &&
+                    !mediaUrl &&
+                    text &&
+                    text.trim().length > 0;
 
-                try {
-                    await this.sock.sendPresenceUpdate('composing', chatId);
-                } catch (e) { }
-
-                const limit = parseInt(config.memoryWindow) || 10;
-                let history = await this.storeService.getHistory(chatId, limit);
-
-                // Remove the message we just saved from history to avoid duplication
-                // because openaiService will append the current message/image manually
-                if (history.length > 0 && history[history.length - 1].role === 'user') {
-                    history.pop();
+                if (canBuffer) {
+                    this.enqueueBufferedMessage(chatId, { text, config });
+                } else {
+                    this.flushBufferedMessages(chatId);
+                    this.triggerAIResponse({
+                        chatId,
+                        text: text || '',
+                        imageBase64,
+                        mimeType,
+                        config,
+                        forceFastDelay: Boolean(audioMessage || imageBase64),
+                    });
                 }
-                const delay = imageBase64 || audioMessage ? 1000 : Math.min(Math.max(text.length * 50, 1000), 3000);
+            }
+        });
+    }
 
-                setTimeout(async () => {
-                    let response = '';
-                    let sentMsgId = null;
+    enqueueBufferedMessage(chatId, payload) {
+        const existing = this.messageBuffers.get(chatId) || { entries: [], timer: null };
+        existing.entries.push({
+            text: (payload.text || '').trim(),
+            config: payload.config,
+        });
 
+        if (existing.timer) {
+            clearTimeout(existing.timer);
+        }
+
+        if (existing.entries.length >= this.messageBufferMax) {
+            this.messageBuffers.set(chatId, existing);
+            this.flushBufferedMessages(chatId);
+            return;
+        }
+
+        existing.timer = setTimeout(() => this.flushBufferedMessages(chatId), this.messageBufferWindow);
+        this.messageBuffers.set(chatId, existing);
+    }
+
+    flushBufferedMessages(chatId) {
+        const buffer = this.messageBuffers.get(chatId);
+        if (!buffer) return;
+
+        if (buffer.timer) {
+            clearTimeout(buffer.timer);
+        }
+
+        this.messageBuffers.delete(chatId);
+
+        const aggregatedText = buffer.entries.map((entry) => entry.text).filter(Boolean).join('\n').trim();
+        if (!aggregatedText) return;
+
+        const config = buffer.entries[buffer.entries.length - 1]?.config;
+        this.triggerAIResponse({ chatId, text: aggregatedText, config });
+    }
+
+    async triggerAIResponse({ chatId, text = '', imageBase64 = null, mimeType = null, config, forceFastDelay = false }) {
+        if (!text && !imageBase64) {
+            return;
+        }
+
+        const activeConfig = config || (await this.storeService.getConfig());
+        const limit = parseInt(activeConfig.memoryWindow) || 10;
+        let history = await this.storeService.getHistory(chatId, limit);
+
+        while (history.length > 0 && history[history.length - 1].role === 'user') {
+            history.pop();
+        }
+
+        try {
+            await this.sock.sendPresenceUpdate('composing', chatId);
+        } catch (e) { }
+
+        const effectiveText = text || '';
+        const delay = forceFastDelay ? 1000 : Math.min(Math.max(effectiveText.length * 50, 1000), 3000);
+
+        setTimeout(() => {
+            this.processAIResponse({
+                chatId,
+                text: effectiveText,
+                history,
+                imageBase64,
+                config: activeConfig,
+                mimeType,
+            });
+        }, delay);
+    }
+
+    async processAIResponse({ chatId, text, history, imageBase64, config, mimeType }) {
+        let response = '';
+        let sentMsgId = null;
+
+        try {
+            response = await openaiService.generateResponse({
+                userId: this.userId,
+                userMessage: text,
+                history,
+                imageBase64,
+                config,
+                mimeType,
+            });
+
+            if (!response) throw new Error('Empty response from OpenAI');
+
+            if (this.status !== 'connected') {
+                throw new Error(`Bot disconnected while generating response (status: ${this.status})`);
+            }
+
+            await this.sock.sendPresenceUpdate('composing', chatId);
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+
+            const sentMsg = await this.sock.sendMessage(chatId, { text: response });
+            sentMsgId = sentMsg?.key?.id;
+            if (sentMsgId) this.botMessageIds.add(sentMsgId);
+        } catch (aiError) {
+            if (aiError?.isPlanLimit) {
+                console.warn(`[${this.userId}] Plan limit triggered (${aiError.code}).`);
+                response = aiError.message;
+                if (this.status === 'connected') {
                     try {
-                        response = await openaiService.generateResponse({
-                            userId: this.userId,
-                            userMessage: text,
-                            history,
-                            imageBase64,
-                            config,
-                            mimeType,
-                        });
-                        if (!response) throw new Error('Empty response from OpenAI');
-
-                        // ✅ VERIFY CONNECTION BEFORE SENDING
-                        if (this.status !== 'connected') {
-                            throw new Error(`Bot disconnected while generating response (status: ${this.status})`);
-                        }
-
-                        await this.sock.sendPresenceUpdate('composing', chatId);
-                        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-                        await new Promise((resolve) => setTimeout(resolve, 1500));
-
                         const sentMsg = await this.sock.sendMessage(chatId, { text: response });
                         sentMsgId = sentMsg?.key?.id;
                         if (sentMsgId) this.botMessageIds.add(sentMsgId);
-
-                    } catch (aiError) {
-                        if (aiError?.isPlanLimit) {
-                            console.warn(`[${this.userId}] Plan limit triggered (${aiError.code}).`);
-                            response = aiError.message;
-                            if (this.status === 'connected') {
-                                try {
-                                    const sentMsg = await this.sock.sendMessage(chatId, { text: response });
-                                    sentMsgId = sentMsg?.key?.id;
-                                    if (sentMsgId) this.botMessageIds.add(sentMsgId);
-                                } catch (notifyError) {
-                                    console.error(`[${this.userId}] Failed to send plan warning:`, notifyError.message);
-                                }
-                            }
-                        } else {
-                            console.error(`[${this.userId}] CRITICAL AI FAILURE:`, aiError);
-
-                            // Only attempt fallback if we're connected
-                            if (config.fallbackMessage && this.status === 'connected') {
-                                try {
-                                    response = config.fallbackMessage;
-                                    const sentMsg = await this.sock.sendMessage(chatId, { text: response });
-                                    sentMsgId = sentMsg?.key?.id;
-                                    if (sentMsgId) this.botMessageIds.add(sentMsgId);
-                                } catch (fallbackError) {
-                                    console.error(`[${this.userId}] Failed to send fallback message:`, fallbackError.message);
-                                }
-                            } else if (this.status !== 'connected') {
-                                console.warn(`[${this.userId}] Message lost due to disconnection. Response: "${response?.substring(0, 50)}..."`);
-                            }
-                        }
-                    } finally {
-                        try {
-                            if (this.status === 'connected') {
-                                await this.sock.sendPresenceUpdate('paused', chatId);
-                            }
-                        } catch (e) { }
-
-                        if (response) {
-                            const assistantMsg = await this.storeService.addMessage(chatId, 'assistant', response, false, false, sentMsgId, 'SENT');
-                            this.emitNewMessage(assistantMsg);
-                        }
+                    } catch (notifyError) {
+                        console.error(`[${this.userId}] Failed to send plan warning:`, notifyError.message);
                     }
-                }, delay);
+                }
+            } else {
+                console.error(`[${this.userId}] CRITICAL AI FAILURE:`, aiError);
+
+                if (config.fallbackMessage && this.status === 'connected') {
+                    try {
+                        response = config.fallbackMessage;
+                        const sentMsg = await this.sock.sendMessage(chatId, { text: response });
+                        sentMsgId = sentMsg?.key?.id;
+                        if (sentMsgId) this.botMessageIds.add(sentMsgId);
+                    } catch (fallbackError) {
+                        console.error(`[${this.userId}] Failed to send fallback message:`, fallbackError.message);
+                    }
+                } else if (this.status !== 'connected') {
+                    console.warn(`[${this.userId}] Message lost due to disconnection. Response: "${response?.substring(0, 50)}..."`);
+                }
             }
-        });
+        } finally {
+            try {
+                if (this.status === 'connected') {
+                    await this.sock.sendPresenceUpdate('paused', chatId);
+                }
+            } catch (e) { }
+
+            if (response) {
+                const assistantMsg = await this.storeService.addMessage(chatId, 'assistant', response, false, false, sentMsgId, 'SENT');
+                this.emitNewMessage(assistantMsg);
+                this.emitClientUpdate({
+                    type: 'CLIENT_ACTIVITY',
+                    chatId,
+                    role: 'assistant',
+                    messageId: assistantMsg.id,
+                    timestamp: assistantMsg.timestamp,
+                    source: 'ai_response',
+                });
+            }
+        }
+    }
+
+    clearAllMessageBuffers() {
+        for (const [, buffer] of this.messageBuffers.entries()) {
+            if (buffer?.timer) {
+                clearTimeout(buffer.timer);
+            }
+        }
+        this.messageBuffers.clear();
     }
 
     getStatus() {
@@ -768,6 +878,7 @@ export class WhatsAppService {
     async logout() {
         this.stopReminderScheduler();
         this.stopDeduplicationCleanup();
+        this.clearAllMessageBuffers();
         console.log(`[${this.userId}] Logging out...`);
         try {
             this.isLoggingOut = true;
@@ -914,7 +1025,16 @@ export class WhatsAppService {
                             console.log(`[${this.userId}] ✅ Reminder sent to ${r.chatId}`);
 
                             // Log to history as Reminder
-                            await this.storeService.addMessage(r.chatId, 'assistant', message, false, false, sentMsg?.key?.id, 'SENT', true);
+                            const reminderMsg = await this.storeService.addMessage(r.chatId, 'assistant', message, false, false, sentMsg?.key?.id, 'SENT', true);
+                            this.emitNewMessage(reminderMsg);
+                            this.emitClientUpdate({
+                                type: 'CLIENT_ACTIVITY',
+                                chatId: r.chatId,
+                                role: 'assistant',
+                                messageId: reminderMsg.id,
+                                timestamp: reminderMsg.timestamp,
+                                source: 'reminder'
+                            });
 
                             // If recurring, create next reminder
                             if (r.recurrenceDays) {

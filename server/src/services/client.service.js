@@ -1,4 +1,5 @@
 import { prisma } from './db.service.js';
+import { stateService } from './state.service.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,9 +15,19 @@ export class ClientService {
     async getClients(botId, page = 1, limit = 50, filter = {}) {
         const skip = (page - 1) * limit;
 
+        await stateService.ensureDefaultState(botId);
+
         // Build where clause
         const where = { botId };
         if (filter.status && filter.status !== 'ALL') where.status = filter.status;
+        if (filter.stateId) where.stateId = filter.stateId;
+        if (filter.tagIds?.length) {
+            where.tagLinks = {
+                some: {
+                    tagId: { in: filter.tagIds }
+                }
+            };
+        }
         if (filter.search) {
             where.OR = [
                 { name: { contains: filter.search } },
@@ -29,7 +40,15 @@ export class ClientService {
                 where,
                 skip,
                 take: limit,
-                orderBy: { updatedAt: 'desc' }
+                orderBy: { updatedAt: 'desc' },
+                include: {
+                    state: true,
+                    tagLinks: {
+                        include: {
+                            tag: true
+                        }
+                    }
+                }
             }),
             prisma.client.count({ where })
         ]);
@@ -37,22 +56,69 @@ export class ClientService {
         // Fetch next reminder for each client
         const clientsWithReminders = await Promise.all(
             clients.map(async (client) => {
-                const nextReminder = await prisma.reminder.findFirst({
+                const [nextReminder, lastMessage] = await Promise.all([
+                    prisma.reminder.findFirst({
+                        where: {
+                            botId,
+                            chatId: client.chatId,
+                            dueDate: { gte: new Date() }
+                        },
+                        orderBy: { dueDate: 'asc' }
+                    }),
+                    prisma.message.findFirst({
+                        where: {
+                            botId,
+                            chatId: client.chatId
+                        },
+                        orderBy: { timestamp: 'desc' },
+                        select: {
+                            id: true,
+                            role: true,
+                            content: true,
+                            timestamp: true,
+                            isManual: true,
+                            isBroadcast: true
+                        }
+                    })
+                ]);
+
+                // Count unread messages (messages from user that haven't been read)
+                const unreadCount = await prisma.message.count({
                     where: {
                         botId,
                         chatId: client.chatId,
-                        dueDate: { gte: new Date() }
-                    },
-                    orderBy: { dueDate: 'asc' }
+                        role: 'user',
+                        status: { not: 'READ' }
+                    }
                 });
 
-                return {
+                const lastMessageData = lastMessage
+                    ? {
+                        id: lastMessage.id,
+                        role: lastMessage.role,
+                        content: lastMessage.content,
+                        timestamp: lastMessage.timestamp,
+                        isManual: lastMessage.isManual,
+                        isBroadcast: lastMessage.isBroadcast
+                    }
+                    : null;
+
+                const tags = client.tagLinks?.map(link => link.tag) || [];
+                const normalized = {
                     ...client,
-                    nextReminder: nextReminder ? {
-                        dueDate: nextReminder.dueDate,
-                        recurrenceDays: nextReminder.recurrenceDays
-                    } : null
+                    tags,
+                    nextReminder: nextReminder
+                        ? {
+                            dueDate: nextReminder.dueDate,
+                            recurrenceDays: nextReminder.recurrenceDays
+                        }
+                        : null,
+                    lastMessage: lastMessageData,
+                    unreadCount,
+                    hasNewMessages: unreadCount > 0
                 };
+                delete normalized.tagLinks;
+                return normalized;
             })
         );
 
@@ -60,9 +126,22 @@ export class ClientService {
     }
 
     async getClientById(id) {
-        return await prisma.client.findUnique({
-            where: { id }
+        const client = await prisma.client.findUnique({
+            where: { id },
+            include: {
+                state: true,
+                tagLinks: { include: { tag: true } }
+            }
         });
+
+        if (!client) return null;
+
+        const normalized = {
+            ...client,
+            tags: client.tagLinks?.map(link => link.tag) || []
+        };
+        delete normalized.tagLinks;
+        return normalized;
     }
 
     async upsertClient(botId, chatId, name, profilePicUrl = null) {
@@ -95,6 +174,8 @@ export class ClientService {
 
         if (!existing) {
             try {
+                const defaultState = await stateService.ensureDefaultState(botId);
+
                 const client = await prisma.client.create({
                     data: {
                         botId,
@@ -102,7 +183,8 @@ export class ClientService {
                         name: normalizedName || chatId,
                         profilePicUrl,
                         status: 'LEAD',
-                        tags: '[]'
+                        tags: '[]',
+                        stateId: defaultState.id
                     }
                 });
                 return { client, isNew: true };
@@ -158,6 +240,12 @@ export class ClientService {
             where.id = { in: criteria.ids };
         } else {
             if (criteria.status) where.status = criteria.status;
+            if (criteria.stateId) where.stateId = criteria.stateId;
+            if (criteria.tagIds?.length) {
+                where.tagLinks = {
+                    some: { tagId: { in: criteria.tagIds } }
+                };
+            }
             if (criteria.olderThanDays) {
                 const date = new Date();
                 date.setDate(date.getDate() - criteria.olderThanDays);
@@ -171,20 +259,10 @@ export class ClientService {
 
 
     async getStats(botId) {
-        // 1. Status Counts
-        const statusGroups = await prisma.client.groupBy({
-            by: ['status'],
-            where: { botId },
-            _count: { status: true }
-        });
+        await stateService.ensureDefaultState(botId);
 
-        // Convert to easy dictionary: { LEAD: 10, HOT: 2, ... }
-        const statusCounts = statusGroups.reduce((acc, curr) => {
-            acc[curr.status] = curr._count.status;
-            return acc;
-        }, { LEAD: 0, HOT: 0, CUSTOMER: 0, ARCHIVED: 0, BLOCKED: 0 });
+        const states = await stateService.getStates(botId);
 
-        // 2. New Clients Today
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
 
@@ -195,10 +273,18 @@ export class ClientService {
             }
         });
 
+        const totalClients = await prisma.client.count({ where: { botId } });
+
         return {
-            statusCounts,
+            states: states.map(state => ({
+                id: state.id,
+                name: state.name,
+                orderIndex: state.orderIndex,
+                isDefault: state.isDefault,
+                count: state._count?.clients ?? 0
+            })),
             newToday,
-            total: Object.values(statusCounts).reduce((a, b) => a + b, 0)
+            total: totalClients
         };
     }
 
@@ -227,6 +313,14 @@ export class ClientService {
             where.id = { in: criteria.ids };
         } else if (criteria.status && criteria.status !== 'ALL') {
             where.status = criteria.status;
+        } else if (criteria.stateId) {
+            where.stateId = criteria.stateId;
+        } else if (criteria.tagIds?.length) {
+            where.tagLinks = {
+                some: {
+                    tagId: { in: criteria.tagIds }
+                }
+            };
         }
 
         const clients = await prisma.client.findMany({ where });

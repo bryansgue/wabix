@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import { X, Download, BarChart3, FileDown, TrendingUp, Users, MessageSquare, Send } from 'lucide-react';
 import api from '../services/api';
 
-export const StatsModal = ({ isOpen, onClose }) => {
+export const StatsModal = ({ isOpen, onClose, stateOptions = [] }) => {
     const [activeTab, setActiveTab] = useState('stats');
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -29,9 +30,12 @@ export const StatsModal = ({ isOpen, onClose }) => {
 
     const handleExportClients = async () => {
         try {
-            const statusParam = exportFilter !== 'all' ? `&status=${exportFilter}` : '';
-            const response = await api.get(`/clients/export?format=${exportFormat}${statusParam}`, {
-                responseType: 'blob'
+            const params = new URLSearchParams({ format: exportFormat });
+            if (exportFilter !== 'all') {
+                params.append('stateId', exportFilter);
+            }
+            const response = await api.get(`/clients/export?${params.toString()}`, {
+                responseType: 'blob',
             });
 
             const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -74,7 +78,7 @@ ${stats.topKeywords.map((kw, i) => `${i + 1}. ${kw.word},${kw.count} veces`).joi
 
 ACTIVIDAD DIARIA (Últimos 7 días)
 Fecha,Total,Usuarios,Bot
-${stats.dailyActivity.map(day => `${day.date},${day.total},${day.user},${day.bot}`).join('\n')}
+${stats.dailyActivity.map((day) => `${day.date},${day.total},${day.user},${day.bot}`).join('\n')}
 `;
 
         const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -113,19 +117,21 @@ ${stats.dailyActivity.map(day => `${day.date},${day.total},${day.user},${day.bot
                 <div className="flex border-b border-gray-200 bg-white">
                     <button
                         onClick={() => setActiveTab('stats')}
-                        className={`flex-1 px-6 py-2.5 text-sm font-bold transition-all ${activeTab === 'stats'
-                            ? 'text-[#111b21] bg-[#f0f2f5] border-b-2 border-[#00a884]'
-                            : 'text-[#54656f] hover:text-[#111b21] hover:bg-gray-50'
-                            }`}
+                        className={`flex-1 px-6 py-2.5 text-sm font-bold transition-all ${
+                            activeTab === 'stats'
+                                ? 'text-[#111b21] bg-[#f0f2f5] border-b-2 border-[#00a884]'
+                                : 'text-[#54656f] hover:text-[#111b21] hover:bg-gray-50'
+                        }`}
                     >
                         📊 Estadísticas
                     </button>
                     <button
                         onClick={() => setActiveTab('export')}
-                        className={`flex-1 px-6 py-2.5 text-sm font-bold transition-all ${activeTab === 'export'
-                            ? 'text-[#111b21] bg-[#f0f2f5] border-b-2 border-[#00a884]'
-                            : 'text-[#54656f] hover:text-[#111b21] hover:bg-gray-50'
-                            }`}
+                        className={`flex-1 px-6 py-2.5 text-sm font-bold transition-all ${
+                            activeTab === 'export'
+                                ? 'text-[#111b21] bg-[#f0f2f5] border-b-2 border-[#00a884]'
+                                : 'text-[#54656f] hover:text-[#111b21] hover:bg-gray-50'
+                        }`}
                     >
                         📥 Exportar Datos
                     </button>
@@ -133,7 +139,6 @@ ${stats.dailyActivity.map(day => `${day.date},${day.total},${day.user},${day.bot
 
                 {/* Content */}
                 <div className="p-4 bg-[#f0f2f5]">
-
                     {loading ? (
                         <div className="flex items-center justify-center py-20">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#00a884]"></div>
@@ -147,6 +152,7 @@ ${stats.dailyActivity.map(day => `${day.date},${day.total},${day.user},${day.bot
                             filter={exportFilter}
                             setFilter={setExportFilter}
                             onExport={handleExportClients}
+                            stateOptions={stateOptions}
                         />
                     )}
                 </div>
@@ -155,22 +161,35 @@ ${stats.dailyActivity.map(day => `${day.date},${day.total},${day.user},${day.bot
     );
 };
 
+StatsModal.propTypes = {
+    isOpen: PropTypes.bool.isRequired,
+    onClose: PropTypes.func.isRequired,
+    stateOptions: PropTypes.arrayOf(
+        PropTypes.shape({
+            id: PropTypes.string.isRequired,
+            name: PropTypes.string.isRequired,
+        }),
+    ),
+};
+
 const StatsTab = ({ stats, onDownload }) => {
     if (!stats) return null;
 
     // Calculate dynamic "nice" scale
-    const rawMax = Math.max(...stats.dailyActivity.map(d => d.total), 1);
-    const niceMax = rawMax <= 10 ? 10 :
-        rawMax <= 50 ? 50 :
-            rawMax <= 100 ? 100 :
-                Math.ceil(rawMax / 50) * 50;
+    const rawMax = Math.max(...stats.dailyActivity.map((d) => d.total), 1);
+    const niceMax = rawMax <= 10 ? 10 : rawMax <= 50 ? 50 : rawMax <= 100 ? 100 : Math.ceil(rawMax / 50) * 50;
 
     return (
         <div className="space-y-4">
             {/* KPI Cards */}
             <div className="grid grid-cols-4 gap-3">
                 <StatCard icon={<MessageSquare />} label="Total Mensajes" value={stats.messages.total} color="blue" />
-                <StatCard icon={<Users />} label="Mensajes Usuarios" value={stats.messages.userMessages} color="green" />
+                <StatCard
+                    icon={<Users />}
+                    label="Mensajes Usuarios"
+                    value={stats.messages.userMessages}
+                    color="green"
+                />
                 <StatCard icon={<Send />} label="Difusiones" value={stats.messages.broadcasts} color="purple" />
                 <StatCard icon={<TrendingUp />} label="Hoy" value={stats.messages.today} color="orange" />
             </div>
@@ -187,7 +206,10 @@ const StatsTab = ({ stats, onDownload }) => {
                         {/* Background Grid Lines */}
                         <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
                             {[100, 75, 50, 25, 0].map((percent) => (
-                                <div key={percent} className="w-full border-t border-gray-100 flex items-center relative">
+                                <div
+                                    key={percent}
+                                    className="w-full border-t border-gray-100 flex items-center relative"
+                                >
                                     <span className="absolute -left-1 text-[8px] text-gray-300 transform -translate-x-full pr-1 font-mono">
                                         {Math.round((niceMax * percent) / 100)}
                                     </span>
@@ -203,11 +225,13 @@ const StatsTab = ({ stats, onDownload }) => {
                                 preserveAspectRatio="none"
                             >
                                 <path
-                                    d={stats.dailyActivity.map((day, i) => {
-                                        const x = ((i + 0.5) / stats.dailyActivity.length) * 100;
-                                        const y = 100 - (day.total / niceMax) * 100;
-                                        return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-                                    }).join(' ')}
+                                    d={stats.dailyActivity
+                                        .map((day, i) => {
+                                            const x = ((i + 0.5) / stats.dailyActivity.length) * 100;
+                                            const y = 100 - (day.total / niceMax) * 100;
+                                            return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                                        })
+                                        .join(' ')}
                                     fill="none"
                                     stroke="#f59e0b"
                                     strokeWidth="0.75"
@@ -254,7 +278,9 @@ const StatsTab = ({ stats, onDownload }) => {
                     <div className="space-y-1.5">
                         {stats.topKeywords.map((kw, i) => (
                             <div key={i} className="flex items-center justify-between">
-                                <span className="text-[#54656f] text-sm">{i + 1}. {kw.word}</span>
+                                <span className="text-[#54656f] text-sm">
+                                    {i + 1}. {kw.word}
+                                </span>
                                 <span className="text-[#00a884] font-bold text-sm">{kw.count} veces</span>
                             </div>
                         ))}
@@ -274,7 +300,43 @@ const StatsTab = ({ stats, onDownload }) => {
     );
 };
 
-const ExportTab = ({ format, setFormat, filter, setFilter, onExport }) => {
+StatsTab.propTypes = {
+    stats: PropTypes.shape({
+        messages: PropTypes.shape({
+            total: PropTypes.number,
+            userMessages: PropTypes.number,
+            botMessages: PropTypes.number,
+            broadcasts: PropTypes.number,
+            manual: PropTypes.number,
+            reminders: PropTypes.number,
+            today: PropTypes.number,
+        }),
+        broadcasts: PropTypes.shape({
+            total: PropTypes.number,
+            read: PropTypes.number,
+            readRate: PropTypes.number,
+            delivered: PropTypes.number,
+            deliveryRate: PropTypes.number,
+        }),
+        topKeywords: PropTypes.arrayOf(
+            PropTypes.shape({
+                word: PropTypes.string,
+                count: PropTypes.number,
+            }),
+        ),
+        dailyActivity: PropTypes.arrayOf(
+            PropTypes.shape({
+                date: PropTypes.string,
+                total: PropTypes.number,
+                user: PropTypes.number,
+                bot: PropTypes.number,
+            }),
+        ),
+    }),
+    onDownload: PropTypes.func.isRequired,
+};
+
+const ExportTab = ({ stateOptions = [], format, setFormat, filter, setFilter, onExport }) => {
     return (
         <div className="space-y-4">
             <div className="bg-white rounded-lg p-4 border border-gray-200">
@@ -304,12 +366,17 @@ const ExportTab = ({ format, setFormat, filter, setFilter, onExport }) => {
                             className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[#111b21] text-sm focus:outline-none focus:border-[#00a884]"
                         >
                             <option value="all">Todos los Clientes</option>
-                            <option value="LEAD">Solo LEADS</option>
-                            <option value="HOT">Solo HOT</option>
-                            <option value="CUSTOMER">Solo CLIENTES</option>
-                            <option value="ARCHIVED">Solo ARCHIVADOS</option>
-                            <option value="BLOCKED">Solo BLOQUEADOS</option>
+                            {stateOptions.map((state) => (
+                                <option key={state.id} value={state.id}>
+                                    {state.name}
+                                </option>
+                            ))}
                         </select>
+                        {stateOptions.length === 0 && (
+                            <p className="text-[11px] text-[#aeb5ba] mt-1">
+                                Crea estados personalizados para segmentar tus exportaciones.
+                            </p>
+                        )}
                     </div>
 
                     <button
@@ -324,11 +391,26 @@ const ExportTab = ({ format, setFormat, filter, setFilter, onExport }) => {
 
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                 <p className="text-[#3b4a54] text-xs">
-                    💡 <strong>Tip:</strong> El archivo CSV se puede abrir directamente en Excel. El formato JSON es útil para backups completos o migraciones.
+                    💡 <strong>Tip:</strong> El archivo CSV se puede abrir directamente en Excel. El formato JSON es
+                    útil para backups completos o migraciones.
                 </p>
             </div>
         </div>
     );
+};
+
+ExportTab.propTypes = {
+    stateOptions: PropTypes.arrayOf(
+        PropTypes.shape({
+            id: PropTypes.string.isRequired,
+            name: PropTypes.string.isRequired,
+        }),
+    ),
+    format: PropTypes.string.isRequired,
+    setFormat: PropTypes.func.isRequired,
+    filter: PropTypes.string.isRequired,
+    setFilter: PropTypes.func.isRequired,
+    onExport: PropTypes.func.isRequired,
 };
 
 const StatCard = ({ icon, label, value, color }) => {
@@ -336,7 +418,7 @@ const StatCard = ({ icon, label, value, color }) => {
         blue: 'bg-blue-50 border-blue-200 text-blue-600',
         green: 'bg-green-50 border-green-200 text-green-600',
         purple: 'bg-purple-50 border-purple-200 text-purple-600',
-        orange: 'bg-orange-50 border-orange-200 text-orange-600'
+        orange: 'bg-orange-50 border-orange-200 text-orange-600',
     };
 
     return (
@@ -348,4 +430,11 @@ const StatCard = ({ icon, label, value, color }) => {
             <div className="text-xl font-bold text-[#111b21]">{value.toLocaleString()}</div>
         </div>
     );
+};
+
+StatCard.propTypes = {
+    icon: PropTypes.element.isRequired,
+    label: PropTypes.string.isRequired,
+    value: PropTypes.number.isRequired,
+    color: PropTypes.oneOf(['blue', 'green', 'purple', 'orange']).isRequired,
 };

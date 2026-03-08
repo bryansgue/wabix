@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthProvider';
-import { Bot, User, Lock, ArrowRight, Sparkles } from 'lucide-react';
-import clsx from 'clsx';
+import { Bot, User, Lock, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
@@ -16,8 +15,7 @@ export const LoginPage = () => {
 
     useEffect(() => {
         // Check if registration is allowed
-        api
-            .get('/auth/settings')
+        api.get('/auth/settings')
             .then((res) => setAllowRegister(res.data.allowRegistration))
             .catch(() => setAllowRegister(true));
     }, []);
@@ -50,8 +48,12 @@ export const LoginPage = () => {
                     <div className="w-20 h-20 bg-gradient-to-tr from-[#00a884] to-[#008069] rounded-3xl mx-auto flex items-center justify-center mb-6 shadow-xl shadow-[#00a884]/20 animate-float">
                         <Bot size={40} className="text-white" />
                     </div>
-                    <h1 className="text-4xl font-black text-[#111b21] tracking-tighter mb-2">AutoBOT <span className="text-[#00a884]">AI</span></h1>
-                    <p className="text-[#54656f] text-sm font-medium uppercase tracking-[0.2em]">SISTEMA NEURONAL V2.0</p>
+                    <h1 className="text-4xl font-black text-[#111b21] tracking-tighter mb-2">
+                        AutoBOT <span className="text-[#00a884]">AI</span>
+                    </h1>
+                    <p className="text-[#54656f] text-sm font-medium uppercase tracking-[0.2em]">
+                        SISTEMA NEURONAL V2.0
+                    </p>
                 </div>
 
                 {/* Form */}
@@ -121,12 +123,16 @@ export const LoginPage = () => {
                             {isLogin ? (
                                 <>
                                     ¿No tienes cuenta?{' '}
-                                    <span className="text-[#00a884] font-black hover:underline underline-offset-4">Regístrate</span>
+                                    <span className="text-[#00a884] font-black hover:underline underline-offset-4">
+                                        Regístrate
+                                    </span>
                                 </>
                             ) : (
                                 <>
                                     ¿Ya tienes cuenta?{' '}
-                                    <span className="text-[#00a884] font-black hover:underline underline-offset-4">Ingresa</span>
+                                    <span className="text-[#00a884] font-black hover:underline underline-offset-4">
+                                        Ingresa
+                                    </span>
                                 </>
                             )}
                         </button>

@@ -1,13 +1,27 @@
-
-import React, { useState, useEffect, useRef } from 'react';
-import { X, MessageSquare, Clock, User, Bot, Megaphone, Check, CheckCheck, Send, Power, Zap, Paperclip, Trash2 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import PropTypes from 'prop-types';
+import {
+    MessageSquare,
+    Clock,
+    User,
+    Bot,
+    Megaphone,
+    Check,
+    CheckCheck,
+    Send,
+    Power,
+    Zap,
+    Paperclip,
+    Trash2,
+} from 'lucide-react';
 import { getClientMessages, sendManualMessage, toggleBotPause } from '../services/api';
 
-export const ChatViewer = ({ client, onClose, socket }) => {
+export const ChatViewer = ({ client, socket }) => {
     const [messages, setMessages] = useState([]);
     const [loading, setLoading] = useState(true);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
+    const [loadingOlder, setLoadingOlder] = useState(false);
     const [showProfileModal, setShowProfileModal] = useState(false);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
@@ -59,41 +73,76 @@ export const ChatViewer = ({ client, onClose, socket }) => {
 
     const bottomRef = useRef(null);
 
-    const fetchMessages = async (pageNum) => {
-        try {
-            const { data } = await getClientMessages(client.chatId, { page: pageNum, limit: 50 });
-            if (data.data.length < 50) setHasMore(false);
-
-            if (pageNum === 1) {
-                setMessages(data.data);
-                setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' }), 100);
-            } else {
-                setMessages(prev => [...data.data, ...prev]);
-            }
-        } catch (error) {
-            console.error('Error fetching chat', error);
-        } finally {
-            setLoading(false);
-        }
+    const fetchMessages = async ({ chatId, pageNum = 1 }) => {
+        const { data } = await getClientMessages(chatId, { page: pageNum, limit: 50 });
+        return data.data;
     };
 
     useEffect(() => {
-        fetchMessages(1);
-    }, [client]);
+        if (!client?.chatId) return;
+
+        let cancelled = false;
+
+        const loadChat = async () => {
+            setLoading(true);
+            setPage(1);
+            setHasMore(true);
+            setMessages([]);
+
+            try {
+                const fetchedMessages = await fetchMessages({ chatId: client.chatId, pageNum: 1 });
+                if (cancelled) return;
+
+                setMessages(fetchedMessages);
+                setHasMore(fetchedMessages.length === 50);
+                setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' }), 100);
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Error fetching chat', error);
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            }
+        };
+
+        loadChat();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [client?.chatId]);
+
+    const handleLoadOlderMessages = async () => {
+        if (!client?.chatId || !hasMore || loadingOlder) return;
+
+        setLoadingOlder(true);
+        const nextPage = page + 1;
+
+        try {
+            const olderMessages = await fetchMessages({ chatId: client.chatId, pageNum: nextPage });
+            setPage(nextPage);
+            setHasMore(olderMessages.length === 50);
+            setMessages((prev) => [...olderMessages, ...prev]);
+        } catch (error) {
+            console.error('Error loading older messages', error);
+        } finally {
+            setLoadingOlder(false);
+        }
+    };
 
     useEffect(() => {
         if (!socket) return;
 
         const handleStatusUpdate = ({ messageId, status }) => {
-            setMessages(prev => prev.map(msg =>
-                msg.whatsappId === messageId ? { ...msg, status } : msg
-            ));
+            setMessages((prev) => prev.map((msg) => (msg.whatsappId === messageId ? { ...msg, status } : msg)));
         };
 
         const handleNewMessage = (newMessage) => {
             if (newMessage.chatId === client.chatId) {
-                setMessages(prev => {
-                    if (prev.some(m => m.id === newMessage.id)) return prev;
+                setMessages((prev) => {
+                    if (prev.some((m) => m.id === newMessage.id)) return prev;
                     return [...prev, newMessage];
                 });
                 setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -148,7 +197,6 @@ export const ChatViewer = ({ client, onClose, socket }) => {
             // Server Sync
             setIsBotPaused(data.isBotPaused);
             setBotPausedUntil(data.botPausedUntil);
-
         } catch (error) {
             console.error('Error toggling bot:', error);
             alert('Error al cambiar estado del bot');
@@ -183,14 +231,12 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                 setIsBotPaused(data.botStatus.isBotPaused);
                 setBotPausedUntil(data.botStatus.botPausedUntil);
             }
-
         } catch (error) {
             console.error('Error sending message:', error);
             alert('Error al enviar mensaje: ' + (error.response?.data?.error || error.message));
         } finally {
             setSending(false);
         }
-
     };
 
     const Avatar = ({ isBot, type, onClick }) => {
@@ -244,15 +290,18 @@ export const ChatViewer = ({ client, onClose, socket }) => {
         );
     };
 
+    Avatar.propTypes = {
+        isBot: PropTypes.bool,
+        type: PropTypes.oneOf(['manual', 'broadcast', 'reminder', 'bot']),
+        onClick: PropTypes.func,
+    };
+
     return (
         <div className="relative h-full w-full bg-[#efeae2] border-l border-gray-300 shadow-2xl z-10 flex flex-col rounded-xl overflow-hidden">
             {/* Header */}
             <div className="h-16 bg-[#f0f2f5] border-b border-gray-300 flex items-center justify-between px-4 py-2">
                 <div className="flex items-center gap-3">
-                    <div
-                        className="cursor-pointer"
-                        onClick={() => client.profilePicUrl && setShowProfileModal(true)}
-                    >
+                    <div className="cursor-pointer" onClick={() => client.profilePicUrl && setShowProfileModal(true)}>
                         <Avatar isBot={false} />
                     </div>
                     <div>
@@ -275,21 +324,20 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                             }
                         }}
                         className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border outline-none
-                            ${isBotPaused
-                                ? 'bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20' // OFF
-                                : botPausedUntil
-                                    ? 'bg-amber-500/10 text-amber-600 border-amber-500/20 hover:bg-amber-500/20 ring-1 ring-amber-500/30 animate-pulse' // TIMER
-                                    : 'bg-green-500/10 text-green-600 border-green-500/20 hover:bg-green-500/20' // ON
+                            ${
+                                isBotPaused
+                                    ? 'bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20' // OFF
+                                    : botPausedUntil
+                                      ? 'bg-amber-500/10 text-amber-600 border-amber-500/20 hover:bg-amber-500/20 ring-1 ring-amber-500/30 animate-pulse' // TIMER
+                                      : 'bg-green-500/10 text-green-600 border-green-500/20 hover:bg-green-500/20' // ON
                             }`}
-                        title={isBotPaused || botPausedUntil ? 'Clic para reactivar Bot' : 'Clic para opciones de pausa'}
+                        title={
+                            isBotPaused || botPausedUntil ? 'Clic para reactivar Bot' : 'Clic para opciones de pausa'
+                        }
                     >
                         {isBotPaused ? <Power size={12} /> : botPausedUntil ? <Clock size={12} /> : <Zap size={12} />}
 
-                        {isBotPaused
-                            ? 'BOT OFF'
-                            : botPausedUntil
-                                ? `PAUSA ${timeLeft}`
-                                : 'BOT ON'}
+                        {isBotPaused ? 'BOT OFF' : botPausedUntil ? `PAUSA ${timeLeft}` : 'BOT ON'}
                     </button>
 
                     {/* Dropdown Menu */}
@@ -300,17 +348,29 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                                 <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                                     Pausar Bot por...
                                 </div>
-                                <button onClick={() => handleSetBotState(true, 10)} className="px-4 py-3 text-left hover:bg-gray-50 text-sm text-gray-700 flex items-center gap-2 transition-colors">
+                                <button
+                                    onClick={() => handleSetBotState(true, 10)}
+                                    className="px-4 py-3 text-left hover:bg-gray-50 text-sm text-gray-700 flex items-center gap-2 transition-colors"
+                                >
                                     <Clock size={14} className="text-amber-500" /> 10 Minutos
                                 </button>
-                                <button onClick={() => handleSetBotState(true, 30)} className="px-4 py-3 text-left hover:bg-gray-50 text-sm text-gray-700 flex items-center gap-2 transition-colors">
+                                <button
+                                    onClick={() => handleSetBotState(true, 30)}
+                                    className="px-4 py-3 text-left hover:bg-gray-50 text-sm text-gray-700 flex items-center gap-2 transition-colors"
+                                >
                                     <Clock size={14} className="text-amber-500" /> 30 Minutos
                                 </button>
-                                <button onClick={() => handleSetBotState(true, 60)} className="px-4 py-3 text-left hover:bg-gray-50 text-sm text-gray-700 flex items-center gap-2 transition-colors">
+                                <button
+                                    onClick={() => handleSetBotState(true, 60)}
+                                    className="px-4 py-3 text-left hover:bg-gray-50 text-sm text-gray-700 flex items-center gap-2 transition-colors"
+                                >
                                     <Clock size={14} className="text-amber-500" /> 1 Hora
                                 </button>
                                 <div className="h-px bg-gray-100 my-1"></div>
-                                <button onClick={() => handleSetBotState(true)} className="px-4 py-3 text-left hover:bg-red-50 text-sm text-red-600 flex items-center gap-2 transition-colors font-medium">
+                                <button
+                                    onClick={() => handleSetBotState(true)}
+                                    className="px-4 py-3 text-left hover:bg-red-50 text-sm text-red-600 flex items-center gap-2 transition-colors font-medium"
+                                >
                                     <Power size={14} /> Apagar Indefinidamente
                                 </button>
                             </div>
@@ -318,7 +378,6 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                     )}
                 </div>
             </div>
-
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-black/20">
@@ -334,8 +393,12 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                 ) : (
                     <>
                         {hasMore && (
-                            <button className="w-full text-xs text-wa-secondary hover:text-white py-2">
-                                Cargar más antiguos...
+                            <button
+                                onClick={handleLoadOlderMessages}
+                                disabled={loadingOlder}
+                                className="w-full text-xs text-wa-secondary hover:text-white py-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {loadingOlder ? 'Cargando mensajes...' : 'Cargar más antiguos...'}
                             </button>
                         )}
 
@@ -347,15 +410,16 @@ export const ChatViewer = ({ client, onClose, socket }) => {
 
                                     <div
                                         className={`max-w-[75%] rounded-lg px-3 py-1.5 text-sm shadow-[0_1px_0.5px_rgba(11,20,26,0.13)]
-                                            ${isBot
-                                                ? msg.isBroadcast
-                                                    ? 'bg-[#f3e5f5] text-[#111b21] rounded-tr-none border-l-4 border-purple-500' // Broadcast (Lavanda)
-                                                    : msg.isReminder
-                                                        ? 'bg-[#fffde7] text-[#111b21] rounded-tr-none border border-yellow-200' // Reminder (Crema)
-                                                        : msg.isManual
+                                            ${
+                                                isBot
+                                                    ? msg.isBroadcast
+                                                        ? 'bg-[#f3e5f5] text-[#111b21] rounded-tr-none border-l-4 border-purple-500' // Broadcast (Lavanda)
+                                                        : msg.isReminder
+                                                          ? 'bg-[#fffde7] text-[#111b21] rounded-tr-none border border-yellow-200' // Reminder (Crema)
+                                                          : msg.isManual
                                                             ? 'bg-[#d9fdd3] text-[#111b21] rounded-tr-none' // Operator (Verde WA)
                                                             : 'bg-[#f0f7ff] text-[#111b21] rounded-tr-none' // Bot AI (Azul Hielo)
-                                                : 'bg-white text-[#111b21] rounded-tl-none' // User (Blanco)
+                                                    : 'bg-white text-[#111b21] rounded-tl-none' // User (Blanco)
                                             }`}
                                     >
                                         <div className="whitespace-pre-wrap flex flex-col gap-1">
@@ -379,7 +443,8 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                                             {/* Content & Media */}
                                             {msg.hasMedia && msg.mediaUrl && (
                                                 <div className="mb-2">
-                                                    {msg.mediaType === 'image' || msg.mediaUrl.match(/\.(jpeg|jpg|png|gif|webp)$/i) ? (
+                                                    {msg.mediaType === 'image' ||
+                                                    msg.mediaUrl.match(/\.(jpeg|jpg|png|gif|webp)$/i) ? (
                                                         <img
                                                             src={msg.mediaUrl}
                                                             alt="Adjunto"
@@ -403,8 +468,13 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                                         </div>
 
                                         {/* Metadata (Time & Checks) */}
-                                        <div className={`text-[10px] mt-1 flex items-center gap-1 justify-end text-[#667781]`}>
-                                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        <div
+                                            className={`text-[10px] mt-1 flex items-center gap-1 justify-end text-[#667781]`}
+                                        >
+                                            {new Date(msg.timestamp).toLocaleTimeString([], {
+                                                hour: '2-digit',
+                                                minute: '2-digit',
+                                            })}
 
                                             {isBot && (
                                                 <span className="ml-1" title={msg.status}>
@@ -423,7 +493,15 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                                     {isBot && (
                                         <Avatar
                                             isBot={true}
-                                            type={msg.isManual ? 'manual' : msg.isBroadcast ? 'broadcast' : msg.isReminder ? 'reminder' : 'bot'}
+                                            type={
+                                                msg.isManual
+                                                    ? 'manual'
+                                                    : msg.isBroadcast
+                                                      ? 'broadcast'
+                                                      : msg.isReminder
+                                                        ? 'reminder'
+                                                        : 'bot'
+                                            }
                                         />
                                     )}
                                 </div>
@@ -441,7 +519,11 @@ export const ChatViewer = ({ client, onClose, socket }) => {
                 <div className="px-4 py-2 bg-[#e9edef] border-t border-gray-300 flex items-center gap-3 animate-in slide-in-from-bottom-2 fade-in">
                     <div className="relative group">
                         {previewUrl && (
-                            <img src={previewUrl} alt="Preview" className="h-14 w-14 object-cover rounded-md border border-gray-300 shadow-sm" />
+                            <img
+                                src={previewUrl}
+                                alt="Preview"
+                                className="h-14 w-14 object-cover rounded-md border border-gray-300 shadow-sm"
+                            />
                         )}
                         <button
                             type="button"
@@ -461,7 +543,6 @@ export const ChatViewer = ({ client, onClose, socket }) => {
             {/* Message Input */}
             <div className="p-3 bg-[#f0f2f5] border-t border-gray-300">
                 <form onSubmit={handleSendMessage} className="flex gap-2 items-center">
-
                     {/* Attach Button */}
                     <input
                         type="file"
@@ -534,4 +615,22 @@ export const ChatViewer = ({ client, onClose, socket }) => {
             )}
         </div>
     );
+};
+
+ChatViewer.propTypes = {
+    client: PropTypes.shape({
+        chatId: PropTypes.string.isRequired,
+        name: PropTypes.string,
+        profilePicUrl: PropTypes.string,
+        isBotPaused: PropTypes.bool,
+        botPausedUntil: PropTypes.string,
+    }).isRequired,
+    socket: PropTypes.shape({
+        on: PropTypes.func,
+        off: PropTypes.func,
+    }),
+};
+
+ChatViewer.defaultProps = {
+    socket: null,
 };

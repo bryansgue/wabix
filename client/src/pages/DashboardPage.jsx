@@ -1,11 +1,9 @@
-import React from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { ConnectionCard } from '../components/ConnectionCard';
 import { ConfigForm } from '../components/ConfigForm';
 import { useConfig } from '../hooks/useConfig';
 import { LayoutDashboard, LogOut } from 'lucide-react';
 import { useAuth } from '../contexts/AuthProvider';
-import { Link } from 'react-router-dom';
 
 export const DashboardPage = () => {
     const { logout, user, token } = useAuth();

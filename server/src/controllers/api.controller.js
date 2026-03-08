@@ -2,6 +2,9 @@ import { sessionManager } from '../services/session.manager.js';
 import { authService } from '../services/auth.service.js';
 import { statsService } from '../services/stats.service.js';
 import { listPlanDefinitions } from '../services/plan.service.js';
+import { prisma } from '../services/db.service.js';
+import { stateService } from '../services/state.service.js';
+import { tagService } from '../services/tag.service.js';
 
 // Helper to get or start a session for the authenticated user
 const getBot = async (req) => {
@@ -272,12 +275,15 @@ import { clientService } from '../services/client.service.js';
 export const getClients = async (req, res) => {
     try {
         const { dbId } = await getBot(req);
-        const { page, limit, status, search } = req.query;
+        const { page, limit, status, search, stateId, tags } = req.query;
+        const tagIds = typeof tags === 'string' && tags.length > 0
+            ? tags.split(',').map(t => t.trim()).filter(Boolean)
+            : undefined;
         const result = await clientService.getClients(
             dbId,
             parseInt(page) || 1,
             parseInt(limit) || 20,
-            { status, search }
+            { status, search, stateId, tagIds }
         );
         res.json(result);
     } catch (error) {
@@ -299,13 +305,22 @@ export const updateClient = async (req, res) => {
     try {
         const { dbId } = await getBot(req);
         const { id } = req.params;
-        const data = req.body;
+        const data = { ...req.body };
 
         // Security: Ensure the client belongs to this user's bot
         const client = await clientService.getClientById(id);
         if (!client || client.botId !== dbId) {
             return res.status(403).json({ error: 'Access denied to this client' });
         }
+
+        if (data.stateId) {
+            const state = await prisma.state.findFirst({ where: { id: data.stateId, botId: dbId } });
+            if (!state) {
+                return res.status(400).json({ error: 'Estado inválido para este bot' });
+            }
+        }
+
+        delete data.tags;
 
         const result = await clientService.updateClient(id, data);
         res.json(result);
@@ -340,6 +355,121 @@ export const bulkDeleteClients = async (req, res) => {
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+};
+
+// --- States Management ---
+
+export const getStates = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const states = await stateService.getStates(dbId);
+        res.json(states);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const createState = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { name } = req.body;
+        const state = await stateService.createState(dbId, name);
+        res.status(201).json(state);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+};
+
+export const updateState = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { id } = req.params;
+        const state = await stateService.updateState(dbId, id, req.body);
+        res.json(state);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+};
+
+export const reorderStates = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { order } = req.body;
+        if (!Array.isArray(order)) {
+            return res.status(400).json({ error: 'Order must be an array of state IDs' });
+        }
+        const states = await stateService.reorderStates(dbId, order);
+        res.json(states);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+};
+
+export const deleteState = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { id } = req.params;
+        const result = await stateService.deleteState(dbId, id);
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+};
+
+// --- Tags Management ---
+
+export const getTags = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const tags = await tagService.getTags(dbId);
+        res.json(tags);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const createTag = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const tag = await tagService.createTag(dbId, req.body);
+        res.status(201).json(tag);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+};
+
+export const updateTag = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { id } = req.params;
+        const tag = await tagService.updateTag(dbId, id, req.body);
+        res.json(tag);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+};
+
+export const deleteTag = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { id } = req.params;
+        const result = await tagService.deleteTag(dbId, id);
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+};
+
+export const updateClientTags = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { id } = req.params;
+        const { tagIds } = req.body;
+        const client = await tagService.updateClientTags(dbId, id, tagIds || []);
+        res.json(client);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
     }
 };
 
@@ -581,13 +711,21 @@ export const getDashboardStats = async (req, res) => {
 export const exportClients = async (req, res) => {
     try {
         const { dbId } = await getBot(req);
-        const { format = 'csv', status } = req.query;
+        const { format = 'csv', status, stateId, tags } = req.query;
+
+        const tagIds = typeof tags === 'string' && tags.length > 0
+            ? tags.split(',').map(t => t.trim()).filter(Boolean)
+            : undefined;
 
         // Import clientService at top if not already imported
         const { clientService } = await import('../services/client.service.js');
 
+        const filters = { status };
+        if (stateId) filters.stateId = stateId;
+        if (tagIds?.length) filters.tagIds = tagIds;
+
         // Get all clients (no pagination for export)
-        const result = await clientService.getClients(dbId, 1, 10000, { status });
+        const result = await clientService.getClients(dbId, 1, 10000, filters);
         const clients = result.data;
 
         if (format === 'json') {
@@ -607,21 +745,55 @@ export const exportClients = async (req, res) => {
     }
 };
 
+export const markMessagesAsRead = async (req, res) => {
+    try {
+        const { dbId } = await getBot(req);
+        const { chatId } = req.params;
+
+        // Mark all unread messages from user as read
+        const result = await prisma.message.updateMany({
+            where: {
+                botId: dbId,
+                chatId,
+                role: 'user',
+                status: { not: 'READ' }
+            },
+            data: { status: 'READ' }
+        });
+
+        res.json({ success: true, updated: result.count });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 function convertClientsToCSV(clients) {
     const headers = 'Nombre,Teléfono,Estado,Tags,Notas,Fecha Registro,Última Difusión\n';
 
     const rows = clients.map(client => {
         const name = (client.name || 'Sin nombre').replace(/"/g, '""');
         const phone = client.chatId.split('@')[0];
-        const status = client.status;
-        const tags = JSON.parse(client.tags || '[]').join('; ').replace(/"/g, '""');
+        const stateName = client.state?.name || client.status || 'Sin estado';
+        let tagList = '';
+
+        if (Array.isArray(client.tags)) {
+            tagList = client.tags.map(tag => tag.name).join('; ');
+        } else if (typeof client.tags === 'string') {
+            try {
+                tagList = JSON.parse(client.tags || '[]').join('; ');
+            } catch (err) {
+                tagList = client.tags;
+            }
+        }
+
+        const safeTags = (tagList || '').replace(/"/g, '""');
         const notes = (client.notes || '').replace(/"/g, '""');
         const createdAt = new Date(client.createdAt).toLocaleDateString('es-ES');
         const lastBroadcast = client.lastBroadcastAt
             ? new Date(client.lastBroadcastAt).toLocaleDateString('es-ES')
             : 'Nunca';
 
-        return `"${name}","${phone}","${status}","${tags}","${notes}","${createdAt}","${lastBroadcast}"`;
+        return `"${name}","${phone}","${stateName}","${safeTags}","${notes}","${createdAt}","${lastBroadcast}"`;
     }).join('\n');
 
     return headers + rows;

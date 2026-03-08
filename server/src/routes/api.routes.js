@@ -30,8 +30,19 @@ router.put('/clients/:id', controller.updateClient);
 router.delete('/clients/:id', controller.deleteClient);
 router.post('/clients/bulk-delete', controller.bulkDeleteClients);
 router.get('/clients/:chatId/messages', controller.getClientMessages);
+router.post('/clients/:chatId/messages/mark-read', controller.markMessagesAsRead);
 router.post('/clients/:chatId/reminders', controller.createReminder);
 router.delete('/clients/:chatId/reminders', controller.deleteReminders);
+router.get('/states', controller.getStates);
+router.post('/states', controller.createState);
+router.put('/states/:id', controller.updateState);
+router.post('/states/reorder', controller.reorderStates);
+router.delete('/states/:id', controller.deleteState);
+router.get('/tags', controller.getTags);
+router.post('/tags', controller.createTag);
+router.put('/tags/:id', controller.updateTag);
+router.delete('/tags/:id', controller.deleteTag);
+router.put('/clients/:id/tags', controller.updateClientTags);
 // Configure upload with 1MB limit for broadcasts
 const broadcastUpload = multer({
     storage: multer.memoryStorage(),

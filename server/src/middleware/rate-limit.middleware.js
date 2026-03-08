@@ -1,17 +1,8 @@
 import rateLimit from 'express-rate-limit';
 import { rateLimitConfig } from '../services/auth.service.js';
 
-// Limitador general para la API (Estático por ahora, menos crítico)
-export const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-        status: 429,
-        error: 'Too many requests, please try again later.'
-    }
-});
+// Limitador general deshabilitado temporalmente para evitar errores 429 en las vistas
+export const apiLimiter = (req, res, next) => next();
 
 // Cache del limitador dinámico
 let cachedLimiter = null;

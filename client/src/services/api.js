@@ -34,9 +34,22 @@ export const sendManualMessage = (chatId, data) => {
     return api.post(`/clients/${chatId}/send`, data);
 };
 
-export const toggleBotPause = (chatId, paused, duration) => api.post(`/clients/${chatId}/toggle-bot`, { paused, duration });
+export const toggleBotPause = (chatId, paused, duration) =>
+    api.post(`/clients/${chatId}/toggle-bot`, { paused, duration });
 
+// States
+export const fetchStates = () => api.get('/states');
+export const createState = (payload) => api.post('/states', payload);
+export const updateStateRequest = (id, payload) => api.put(`/states/${id}`, payload);
+export const reorderStates = (order) => api.post('/states/reorder', { order });
+export const deleteStateRequest = (id) => api.delete(`/states/${id}`);
 
+// Tags
+export const fetchTags = () => api.get('/tags');
+export const createTagRequest = (payload) => api.post('/tags', payload);
+export const updateTagRequest = (id, payload) => api.put(`/tags/${id}`, payload);
+export const deleteTagRequest = (id) => api.delete(`/tags/${id}`);
+export const updateClientTags = (clientId, tagIds) => api.put(`/clients/${clientId}/tags`, { tagIds });
 
 // Config
 export const fetchConfig = async () => {
