@@ -13,6 +13,7 @@ const defaultEnvPath = path.resolve(__dirname, '../../../.env');
 const envPath = process.env.ENV_FILE_PATH
     ? path.resolve(process.env.ENV_FILE_PATH)
     : defaultEnvPath;
+const skipEnvFileWarning = process.env.IS_DOCKER === 'true' || process.env.SKIP_ENV_FILE_WARNING === 'true';
 
 if (fs.existsSync(envPath)) {
     const result = dotenv.config({ path: envPath });
@@ -24,7 +25,7 @@ if (fs.existsSync(envPath)) {
         console.error('\n   Please ensure .env file exists in the project root');
         process.exit(1);
     }
-} else {
+} else if (!skipEnvFileWarning) {
     console.warn('⚠️  WARNING: .env file not found at', envPath);
     console.warn('   Falling back to existing environment variables');
 }

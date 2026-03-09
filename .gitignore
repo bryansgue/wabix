@@ -1,6 +1,36 @@
 node_modules/
+client/dist/
+client/.vite/
+client/.eslintcache
+server/node_modules/
+server/dist/
+
+# Environment & secrets
 .env
-*.tar.gz
+.env.*
+
+# Runtime data
+auth_info/
 data/
+sessions/
+server/sessions/
+server/uploads/
+server/logs/
+server/tmp/
+server/dev.db
+server/dev.db-journal
 server/prisma/dev.db
-*.db
+server/prisma/dev.db-journal
+.postgres-data/
+
+# Backups & bundles
+*.tar.gz
+backups/
+
+# System / editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+

@@ -1,28 +1,43 @@
-:80 {
-    log {
-        output stdout
+{$DOMAIN}, www.{$DOMAIN} {
+    tls {$EMAIL}
+    encode gzip zstd
+
+    @websockets {
+        header Connection *Upgrade*
+        header Upgrade websocket
     }
 
-    # Proxy API requests to Backend
-    handle /api/* {
-        reverse_proxy backend:3000
-    }
-
-    # Proxy Socket.io to Backend
     handle /socket.io* {
-        reverse_proxy backend:3000
+        reverse_proxy huao-app:3000 {
+            transport http {
+                compression off
+            }
+        }
     }
 
-    # Proxy Uploads to Backend
+    handle /api/* {
+        reverse_proxy huao-app:3000
+    }
+
     handle /uploads/* {
-        reverse_proxy backend:3000
+        reverse_proxy huao-app:3000
     }
 
-    # Proxy everything else to Frontend Container
-    handle /* {
-        reverse_proxy frontend:80
+    handle {
+        reverse_proxy huao-app:3000
     }
-    
-    # Enable Gzip compression
-    encode gzip
+
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 10
+        }
+    }
 }

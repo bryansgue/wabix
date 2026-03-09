@@ -1,40 +1,72 @@
-version: '3.8'
+version: "3.9"
+
+x-default-env: &default-env
+  - ${ENV_FILE:-.env}
 
 services:
-  whatsapp-bot:
-    build: .
-    container_name: whatsapp-ai-bot
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    depends_on:
-      - postgres
-    volumes:
-      - ./auth_info:/app/auth_info
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      - PORT=3000
-      - NODE_ENV=production
-      - IS_DOCKER=true
-    # Create the auth_info folder locally if it doesn't exist to avoid permission issues
-    # user: "1000:1000" # Uncomment if using Linux to match permissions
-
   postgres:
     image: postgres:15-alpine
-    container_name: autobot-postgres
-    restart: always
-    ports:
-      - "5432:5432"
+    container_name: huao-postgres
+    restart: unless-stopped
+    env_file: *default-env
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=autobot
+      POSTGRES_DB: ${POSTGRES_DB:-huao}
+      POSTGRES_USER: ${POSTGRES_USER:-huao_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_ROOT:-./.postgres-data}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - huao
 
-volumes:
-  postgres_data:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: huao-whatsapp-bot:latest
+    container_name: huao-app
+    restart: unless-stopped
+    env_file: *default-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - ${STORAGE_ROOT:-.}/auth_info:/app/auth_info
+      - ${STORAGE_ROOT:-.}/sessions:/app/server/sessions
+      - ${STORAGE_ROOT:-.}/uploads:/app/server/uploads
+      - ${STORAGE_ROOT:-.}/logs:/app/server/logs
+      - ${STORAGE_ROOT:-.}/backups:/app/backups
+    networks:
+      - huao
+
+  caddy:
+    image: caddy:2
+    container_name: huao-caddy
+    restart: unless-stopped
+    profiles: ["prod"]
+    env_file: *default-env
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ACME_AGREE: "true"
+    volumes:
+      - ${CADDYFILE_PATH:-./Caddyfile}:/etc/caddy/Caddyfile:ro
+      - ${STORAGE_ROOT:-.}/caddy-data:/data
+      - ${STORAGE_ROOT:-.}/caddy-config:/config
+    networks:
+      - huao
+
+networks:
+  huao:
+    driver: bridge
 
 

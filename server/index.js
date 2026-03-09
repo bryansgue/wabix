@@ -2,6 +2,7 @@
 import './src/config/validate-env.js';
 
 import express from 'express';
+import fs from 'fs';
 
 
 // --- LOG SUPPRESSOR ---
@@ -136,14 +137,21 @@ app.use('/api', apiLimiter, apiRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 
-// Serve Static Frontend (Production)
-if (process.env.NODE_ENV === 'production') {
-    const publicPath = path.join(__dirname, 'public');
+// Serve Static Frontend (available in any environment when built)
+const publicPath = path.join(__dirname, 'public');
+if (fs.existsSync(publicPath)) {
     app.use(express.static(publicPath));
 
     app.get('*', (req, res, next) => {
         if (req.path.startsWith('/api')) return next();
         res.sendFile(path.join(publicPath, 'index.html'));
+    });
+} else {
+    app.get('/', (req, res) => {
+        res.status(200).json({
+            message: 'Huao WhatsApp Bot API',
+            docs: '/api/docs',
+        });
     });
 }
 
