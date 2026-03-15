@@ -449,7 +449,7 @@ export const ClientsPage = () => {
                     <div className="flex items-center justify-between gap-4">
                         {/* Logo & Title */}
                         <div className="flex items-center gap-4 min-w-max">
-                            <Link to="/" className="bg-white/10 p-2 rounded-xl hover:bg-white/20 transition-colors">
+                            <Link to="/app" className="bg-white/10 p-2 rounded-xl hover:bg-white/20 transition-colors">
                                 <LayoutDashboard size={20} className="text-white" />
                             </Link>
                             <div className="flex flex-col">

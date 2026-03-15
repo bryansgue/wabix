@@ -144,7 +144,7 @@ export const ConnectionCard = ({ status, qr, userInfo, user, model }) => {
                     {/* Admin Link if Admin */}
                     {user?.role?.toLowerCase() === 'admin' && (
                         <a
-                            href="/admin"
+                            href="/app/admin"
                             className="block w-full text-center bg-purple-50 hover:bg-purple-100 text-purple-700 text-[11px] font-bold py-3 rounded-xl transition-all border border-purple-200 shadow-sm"
                         >
                             IR AL PANEL ADMINISTRATIVO
@@ -153,7 +153,7 @@ export const ConnectionCard = ({ status, qr, userInfo, user, model }) => {
 
                     {/* CRM Main Action */}
                     <Link
-                        to="/clients"
+                        to="/app/clients"
                         className="block w-full text-center bg-[#00a884] hover:bg-[#008069] text-white text-[11px] font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-[#00a884]/20 active:scale-95"
                     >
                         GESTIONAR CLIENTES (CRM)

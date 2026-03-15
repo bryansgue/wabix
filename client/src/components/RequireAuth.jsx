@@ -8,9 +8,9 @@ export const RequireAuth = ({ children }) => {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-wa-dark flex flex-col items-center justify-center space-y-4">
-                <div className="w-12 h-12 border-4 border-accent-wa-teal/30 border-t-accent-wa-teal rounded-full animate-spin neon-glow"></div>
-                <p className="text-accent-wa-teal font-bold tracking-widest animate-pulse">INICIANDO SISTEMA...</p>
+            <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center space-y-4">
+                <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin"></div>
+                <p className="text-emerald-400 font-bold tracking-widest animate-pulse text-sm">CARGANDO...</p>
             </div>
         );
     }
